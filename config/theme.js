@@ -238,14 +238,16 @@ const theme = {
   // ── Platform presets ─────────────────────────────────────────────────────
   // Canvas dimensions for each social platform
   platforms: [
-    { id: 'ig-square',   label: 'IG Square',   icon: '□', ratio: '1:1',      width: 1080, height: 1080 },
-    { id: 'ig-portrait', label: 'IG Portrait',  icon: '▮', ratio: '4:5',      width: 1080, height: 1350 },
-    { id: 'ig-stories',  label: 'IG Stories',   icon: '▋', ratio: '9:16',     width: 1080, height: 1920 },
-    { id: 'tiktok',      label: 'TikTok',       icon: '▋', ratio: '9:16',     width: 1080, height: 1920 },
-    { id: 'facebook',    label: 'Facebook',     icon: '▬', ratio: '1.91:1',   width: 1200, height: 628  },
-    { id: 'youtube',     label: 'YouTube',      icon: '▬', ratio: '16:9',     width: 1280, height: 720  },
-    { id: 'linkedin',    label: 'LinkedIn',     icon: '▬', ratio: '1.91:1',   width: 1200, height: 627  },
-    { id: 'x',           label: 'X',            icon: '▬', ratio: '16:9',     width: 1600, height: 900  },
+    { id: 'ig-square',   label: 'IG Square',   ratio: '1/1',    width: 1080, height: 1080 },
+    { id: 'ig-portrait', label: 'IG Portrait', ratio: '4/5',    width: 1080, height: 1350 },
+    { id: 'ig-landscape',label: 'IG Landscape',ratio: '1.91/1', width: 1080, height:  566 },
+    { id: 'ig-stories',  label: 'IG Stories',  ratio: '9/16',   width: 1080, height: 1920 },
+    { id: 'tiktok',      label: 'TikTok',      ratio: '9/16',   width: 1080, height: 1920 },
+    { id: 'fb-feed',     label: 'FB Feed',     ratio: '4/5',    width: 1080, height: 1350 },
+    { id: 'fb-story',    label: 'FB Story',    ratio: '9/16',   width: 1080, height: 1920 },
+    { id: 'youtube',     label: 'YouTube',     ratio: '16/9',   width: 1280, height:  720 },
+    { id: 'linkedin',    label: 'LinkedIn',    ratio: '1.91/1', width: 1200, height:  627 },
+    { id: 'x',           label: 'X',           ratio: '16/9',   width: 1600, height:  900 },
   ],
 
   // ── Grid layouts ─────────────────────────────────────────────────────────

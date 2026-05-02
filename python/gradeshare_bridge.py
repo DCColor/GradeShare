@@ -222,19 +222,6 @@ def cmd_get_stills(payload):
 
     album  = albums[album_index]
     stills = album.GetStills()
-    total  = len(stills) if stills else 0
-
-    if not stills:
-        return {
-            'stills':       [],
-            'exportPath':   None,
-            'health':       'red',
-            'totalCount':   0,
-            'loadedCount':  0,
-            'missingCount': 0,
-            'count':        0,
-            'message':      'No stills in album',
-        }
 
     # Export to temp folder as JPG for preview.
     # ExportStills return value is unreliable — ignore it entirely and
@@ -242,27 +229,30 @@ def cmd_get_stills(payload):
     tmp_dir = tempfile.mkdtemp(prefix='gradeshare_preview_')
     prefix  = 'gs_preview'
 
-    log(f'[get_stills] Exporting {total} stills → {tmp_dir}')
-    album.ExportStills(stills, tmp_dir, prefix, 'jpg')
+    log(f'[get_stills] Exporting stills → {tmp_dir}')
+    if stills:
+        album.ExportStills(stills, tmp_dir, prefix, 'jpg')
 
-    # Check what actually landed on disk
+    # Count what actually landed on disk — this is the authoritative export count.
     try:
-        jpg_files = [f for f in os.listdir(tmp_dir) if f.lower().endswith('.jpg')]
+        dir_entries  = os.listdir(tmp_dir)
+        jpg_count    = sum(1 for f in dir_entries if f.lower().endswith('.jpg'))
+        drx_count    = sum(1 for f in dir_entries if f.lower().endswith('.drx'))
     except Exception as e:
         log(f'[get_stills] Could not list tmp_dir: {e}')
-        jpg_files = []
+        jpg_count = drx_count = 0
 
-    log(f'[get_stills] {len(jpg_files)} jpg files found in tmp_dir after export')
+    log(f'[get_stills] Files on disk after export — jpg: {jpg_count}, drx: {drx_count}')
 
-    if not jpg_files:
+    if jpg_count == 0:
         log('[get_stills] No jpg files found — media may not be available on this workstation')
         return {
             'stills':       [],
             'exportPath':   tmp_dir,
             'health':       'red',
-            'totalCount':   total,
+            'totalCount':   0,
             'loadedCount':  0,
-            'missingCount': total,
+            'missingCount': 0,
             'count':        0,
             'message':      'No stills could be exported — media may not be available on this workstation',
         }
@@ -284,6 +274,7 @@ def cmd_get_stills(payload):
         except Exception as e:
             log(f'[get_stills] Error checking image {img}: {e}')
 
+    total  = jpg_count  # authoritative: what was actually exported
     loaded = len(valid)
     log(f'[get_stills] {loaded} of {total} stills loaded successfully')
 

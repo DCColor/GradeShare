@@ -5,14 +5,16 @@
 // These arrays mirror config/theme.js exactly.
 
 const PLATFORMS = [
-  { id: 'ig-square',   label: 'IG Square',   width: 1080, height: 1080 },
-  { id: 'ig-portrait', label: 'IG Portrait', width: 1080, height: 1350 },
-  { id: 'ig-stories',  label: 'IG Stories',  width: 1080, height: 1920 },
-  { id: 'tiktok',      label: 'TikTok',      width: 1080, height: 1920 },
-  { id: 'facebook',    label: 'Facebook',    width: 1200, height: 628  },
-  { id: 'youtube',     label: 'YouTube',     width: 1280, height: 720  },
-  { id: 'linkedin',    label: 'LinkedIn',    width: 1200, height: 627  },
-  { id: 'x',           label: 'X',           width: 1600, height: 900  },
+  { id: 'ig-square',    label: 'IG Square',   width: 1080, height: 1080 },
+  { id: 'ig-portrait',  label: 'IG Portrait', width: 1080, height: 1350 },
+  { id: 'ig-landscape', label: 'IG Landscape',width: 1080, height:  566 },
+  { id: 'ig-stories',   label: 'IG Stories',  width: 1080, height: 1920 },
+  { id: 'tiktok',       label: 'TikTok',      width: 1080, height: 1920 },
+  { id: 'fb-feed',      label: 'FB Feed',     width: 1080, height: 1350 },
+  { id: 'fb-story',     label: 'FB Story',    width: 1080, height: 1920 },
+  { id: 'youtube',      label: 'YouTube',     width: 1280, height:  720 },
+  { id: 'linkedin',     label: 'LinkedIn',    width: 1200, height:  627 },
+  { id: 'x',            label: 'X',           width: 1600, height:  900 },
 ];
 
 const GRIDS = [
@@ -87,6 +89,7 @@ const state = {
     selectedAlbumType:  null,
     stills:             [],
     selectedStillIds:   [],
+    selectedStills:     [],
     loading:            false,
     albumHealth:        {},
   },
@@ -97,6 +100,10 @@ const state = {
     captionStudio:  '',
     showFilename:   false,
     showWatermark:  true,
+    cellStills:     [],
+    cellOffsets:    [],
+    cellScales:     [],
+    cellLocked:     [],
   },
   contactSheet: {
     gridId:          '3x2',
@@ -235,6 +242,7 @@ function handleDisconnect() {
   state.gallery.selectedAlbumType  = null;
   state.gallery.stills             = [];
   state.gallery.selectedStillIds   = [];
+  state.gallery.selectedStills     = [];
 
   renderSidebarList('still',      []);
   renderSidebarList('powergrade', []);
@@ -365,6 +373,7 @@ async function loadStills(albumIndex, albumType) {
   state.gallery.loading          = true;
   state.gallery.stills           = [];
   state.gallery.selectedStillIds = [];
+  state.gallery.selectedStills   = [];
 
   showHealthNotice('unknown', 0, '');
   switchScreen('gallery');
@@ -456,6 +465,12 @@ function renderStillGrid(stills) {
   });
 }
 
+function syncSelectedStills() {
+  state.gallery.selectedStills = state.gallery.selectedStillIds
+    .map(i => state.gallery.stills[i])
+    .filter(Boolean);
+}
+
 function handleStillClick(index) {
   const ids = state.gallery.selectedStillIds;
   const pos = ids.indexOf(index);
@@ -467,18 +482,21 @@ function handleStillClick(index) {
 
   const card = $('still-grid').querySelector(`[data-index="${index}"]`);
   if (card) card.classList.toggle('selected', ids.includes(index));
+  syncSelectedStills();
   updateGalleryCount();
 }
 
 function handleSelectAll() {
   state.gallery.selectedStillIds = state.gallery.stills.map((_, i) => i);
   $('still-grid').querySelectorAll('.still-card').forEach(c => c.classList.add('selected'));
+  syncSelectedStills();
   updateGalleryCount();
 }
 
 function handleClearSelection() {
   state.gallery.selectedStillIds = [];
   $('still-grid').querySelectorAll('.still-card').forEach(c => c.classList.remove('selected'));
+  syncSelectedStills();
   updateGalleryCount();
 }
 
@@ -548,76 +566,231 @@ function setupToggle(id, onChange) {
 
 // ── Layout screen ──────────────────────────────────────────────────────────
 
-function updateLayoutCanvas() {
-  const canvas    = $('layout-canvas');
-  if (!canvas) return;
-  const container = canvas.parentElement;
-  const maxW      = container.clientWidth  - 40;
-  const maxH      = container.clientHeight - 40;
-  if (maxW <= 0 || maxH <= 0) return;
+let _dragState  = null;  // active pan drag: { img, cellEl, cellIndex, startX, startY, startOX, startOY }
+let _zoomTimers = {};   // per-cell timeout ids for zoom badge fade
 
-  const platform = PLATFORMS.find(p => p.id === state.layout.platformId);
-  const grid     = GRIDS.find(g => g.id === state.layout.gridId);
-  if (!platform) return;
-
-  const ratio = platform.width / platform.height;
-  let w, h;
-  if (maxW / ratio <= maxH) {
-    w = maxW;
-    h = Math.round(maxW / ratio);
-  } else {
-    h = maxH;
-    w = Math.round(maxH * ratio);
-  }
-
-  canvas.width        = w;
-  canvas.height       = h;
-  canvas.style.width  = `${w}px`;
-  canvas.style.height = `${h}px`;
-
-  drawCanvasPreview(canvas, grid);
+function resetLayoutCellState(cellCount) {
+  const sel = state.gallery.selectedStills;
+  state.layout.cellStills  = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
+  state.layout.cellOffsets = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
+  state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
+  state.layout.cellLocked  = Array.from({ length: cellCount }, () => false);
 }
 
-function drawCanvasPreview(canvas, grid) {
-  const ctx  = canvas.getContext('2d');
-  const W    = canvas.width;
-  const H    = canvas.height;
-  const cols = grid?.cols ?? 1;
-  const rows = grid?.rows ?? 1;
-  const cs   = getComputedStyle(document.documentElement);
+function assignStillToCell(cellIndex) {
+  const used = new Set(state.layout.cellStills.filter(Boolean));
+  const next = state.gallery.selectedStills.find(s => !used.has(s));
+  if (!next) return;
+  state.layout.cellStills[cellIndex] = next;
+  updateLayoutCanvas();
+}
 
-  ctx.fillStyle = cs.getPropertyValue('--color-bg-raised').trim();
-  ctx.fillRect(0, 0, W, H);
+function buildLayoutCell(i, cellW, cellH) {
+  const cell   = document.createElement('div');
+  cell.className = 'layout-cell';
+  cell.dataset.cellIndex = String(i);
 
-  const gap   = 2;
-  const cellW = W / cols;
-  const cellH = H / rows;
+  const still  = state.layout.cellStills[i];
+  const locked = state.layout.cellLocked[i];
 
-  ctx.fillStyle = cs.getPropertyValue('--color-bg-mid').trim();
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      ctx.fillRect(
-        c * cellW + gap,
-        r * cellH + gap,
-        cellW - gap * 2,
-        cellH - gap * 2,
-      );
+  if (still) {
+    const rawPath = still.imagePath ?? still.image_path ?? still.path ?? null;
+    if (rawPath) {
+      const img = document.createElement('img');
+      img.className = 'layout-cell-img';
+      img.src = rawPath.startsWith('file://') || rawPath.startsWith('http')
+        ? rawPath
+        : `file://${rawPath}`;
+      img.alt = '';
+      img.draggable = false;
+
+      img.style.left = '0px';
+      img.style.top  = '0px';
+
+      img.onload = () => {
+        const natW  = img.naturalWidth;
+        const natH  = img.naturalHeight;
+        const cover = Math.max(cellW / natW, cellH / natH);
+        const scale = cover * 1.4 * (state.layout.cellScales[i] ?? 1.0);
+        const imgW  = Math.round(natW * scale);
+        const imgH  = Math.round(natH * scale);
+
+        img.style.width  = `${imgW}px`;
+        img.style.height = `${imgH}px`;
+
+        const saved = state.layout.cellOffsets[i];
+        let x, y;
+        if (saved.x === 0 && saved.y === 0) {
+          x = -Math.round((imgW - cellW) / 2);
+          y = -Math.round((imgH - cellH) / 2);
+        } else {
+          const minX = cellW - imgW;
+          const minY = cellH - imgH;
+          x = Math.max(minX, Math.min(0, saved.x));
+          y = Math.max(minY, Math.min(0, saved.y));
+        }
+        state.layout.cellOffsets[i] = { x, y };
+        img.style.left = `${x}px`;
+        img.style.top  = `${y}px`;
+      };
+
+      cell.appendChild(img);
+
+      // Zoom badge
+      const zoomBadge = document.createElement('span');
+      zoomBadge.className = 'layout-cell-zoom';
+      cell.appendChild(zoomBadge);
+
+      // Scroll-to-zoom
+      cell.addEventListener('wheel', e => {
+        e.preventDefault();
+        const natW  = img.naturalWidth;
+        const natH  = img.naturalHeight;
+        if (!natW || !natH) return;
+        const cover    = Math.max(cellW / natW, cellH / natH);
+        const delta    = -e.deltaY * 0.001;
+        const newScale = Math.max(0.5, Math.min(3.0, (state.layout.cellScales[i] ?? 1.0) + delta));
+        state.layout.cellScales[i] = newScale;
+        const imgW = Math.round(natW * cover * 1.4 * newScale);
+        const imgH = Math.round(natH * cover * 1.4 * newScale);
+        img.style.width  = `${imgW}px`;
+        img.style.height = `${imgH}px`;
+        const minX = cellW - imgW;
+        const minY = cellH - imgH;
+        const cur  = state.layout.cellOffsets[i];
+        const x    = Math.max(minX, Math.min(0, cur.x));
+        const y    = Math.max(minY, Math.min(0, cur.y));
+        state.layout.cellOffsets[i] = { x, y };
+        img.style.left = `${x}px`;
+        img.style.top  = `${y}px`;
+        zoomBadge.textContent = `${newScale.toFixed(1)}×`;
+        zoomBadge.classList.add('visible');
+        if (_zoomTimers[i]) clearTimeout(_zoomTimers[i]);
+        _zoomTimers[i] = setTimeout(() => zoomBadge.classList.remove('visible'), 1500);
+      }, { passive: false });
+
+      cell.style.cursor = locked ? 'default' : 'grab';
+
+      if (!locked) {
+        cell.addEventListener('mousedown', e => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          _dragState = {
+            img, cellEl: cell, cellIndex: i, cellW, cellH,
+            startX: e.clientX, startY: e.clientY,
+            startOX: state.layout.cellOffsets[i].x,
+            startOY: state.layout.cellOffsets[i].y,
+          };
+          cell.style.cursor = 'grabbing';
+        });
+      }
     }
+
+    const stillIdx  = state.gallery.selectedStills.indexOf(still);
+    const numLabel  = document.createElement('span');
+    numLabel.className   = 'layout-cell-num';
+    numLabel.textContent = String(stillIdx >= 0 ? stillIdx + 1 : i + 1);
+    cell.appendChild(numLabel);
+  } else {
+    cell.classList.add('layout-cell-empty');
+    cell.addEventListener('click', () => assignStillToCell(i));
   }
 
-  ctx.strokeStyle = cs.getPropertyValue('--color-border-subtle').trim();
-  ctx.lineWidth   = 0.5;
-  for (let c = 1; c < cols; c++) {
-    ctx.beginPath();
-    ctx.moveTo(c * cellW, 0);
-    ctx.lineTo(c * cellW, H);
-    ctx.stroke();
+  const lockBtn = document.createElement('button');
+  lockBtn.className   = `layout-cell-lock${locked ? ' locked' : ''}`;
+  lockBtn.title       = locked ? 'Unlock pan' : 'Lock pan';
+  lockBtn.textContent = locked ? '🔒' : '🔓';
+  lockBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    state.layout.cellLocked[i] = !state.layout.cellLocked[i];
+    updateLayoutCanvas();
+  });
+  cell.appendChild(lockBtn);
+
+  return cell;
+}
+
+function initDocumentDragHandlers() {
+  document.addEventListener('mousemove', e => {
+    if (!_dragState) return;
+    const { img, cellW, cellH, cellIndex, startX, startY, startOX, startOY } = _dragState;
+    const imgW = img.offsetWidth;
+    const imgH = img.offsetHeight;
+    const minX = cellW - imgW;
+    const minY = cellH - imgH;
+    const newX = Math.max(minX, Math.min(0, startOX + e.clientX - startX));
+    const newY = Math.max(minY, Math.min(0, startOY + e.clientY - startY));
+    state.layout.cellOffsets[cellIndex] = { x: newX, y: newY };
+    img.style.left = `${newX}px`;
+    img.style.top  = `${newY}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!_dragState) return;
+    if (!state.layout.cellLocked[_dragState.cellIndex]) {
+      _dragState.cellEl.style.cursor = 'grab';
+    }
+    _dragState = null;
+  });
+}
+
+function setupResizeListener() {
+  let timer;
+  window.addEventListener('resize', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (state.ui.activeScreen === 'layout') {
+        state.layout.cellOffsets = state.layout.cellOffsets.map(() => ({ x: 0, y: 0 }));
+        state.layout.cellScales  = state.layout.cellScales.map(() => 1.0);
+        updateLayoutCanvas();
+      }
+    }, 150);
+  });
+}
+
+function updateLayoutCanvas() {
+  const platform = PLATFORMS.find(p => p.id === state.layout.platformId);
+  const grid     = GRIDS.find(g => g.id === state.layout.gridId);
+  if (!platform || !grid) return;
+
+  const gridEl  = $('layout-canvas');
+  const labelEl = $('layout-label');
+  if (!gridEl) return;
+
+  const { cols, rows } = grid;
+  const cellCount = cols * rows;
+
+  // Compute pixel dimensions — fit platform ratio within available space
+  const wrapEl = gridEl.closest('.layout-preview-wrap');
+  const maxW   = (wrapEl?.clientWidth  ?? 600) - 40;
+  const maxH   = Math.min((wrapEl?.clientHeight ?? 500) - 40 - 26, window.innerHeight * 0.8);
+  if (maxW <= 0 || maxH <= 0) return;
+
+  const ratio = platform.width / platform.height;
+  const w = maxW / ratio <= maxH ? Math.floor(maxW) : Math.floor(maxH * ratio);
+  const h = maxW / ratio <= maxH ? Math.floor(maxW / ratio) : Math.floor(maxH);
+
+  const GAP   = 4;
+  const cellW = Math.floor((w - GAP * (cols - 1)) / cols);
+  const cellH = Math.floor((h - GAP * (rows - 1)) / rows);
+
+  gridEl.style.width                = `${w}px`;
+  gridEl.style.height               = `${h}px`;
+  gridEl.style.gridTemplateColumns  = `repeat(${cols}, 1fr)`;
+  gridEl.style.gridTemplateRows     = `repeat(${rows}, 1fr)`;
+
+  // Initialise cell state if needed (first render or size mismatch)
+  if (state.layout.cellStills.length !== cellCount) {
+    resetLayoutCellState(cellCount);
   }
-  for (let r = 1; r < rows; r++) {
-    ctx.beginPath();
-    ctx.moveTo(0, r * cellH);
-    ctx.lineTo(W, r * cellH);
-    ctx.stroke();
+
+  gridEl.innerHTML = '';
+  for (let i = 0; i < cellCount; i++) {
+    gridEl.appendChild(buildLayoutCell(i, cellW, cellH));
+  }
+
+  if (labelEl) {
+    labelEl.textContent = `${platform.label} — ${platform.width} × ${platform.height}`;
   }
 }
 
@@ -625,7 +798,9 @@ function setupLayoutScreen() {
   const platformEl = $('platform-picker');
   platformEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xs)';
   renderPicker('platform-picker', PLATFORMS, state.layout.platformId, id => {
-    state.layout.platformId = id;
+    state.layout.platformId  = id;
+    state.layout.cellOffsets = state.layout.cellOffsets.map(() => ({ x: 0, y: 0 }));
+    state.layout.cellScales  = state.layout.cellScales.map(() => 1.0);
     updateLayoutCanvas();
   });
 
@@ -633,6 +808,8 @@ function setupLayoutScreen() {
   gridEl.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-xs)';
   renderPicker('grid-picker', GRIDS, state.layout.gridId, id => {
     state.layout.gridId = id;
+    const g = GRIDS.find(gr => gr.id === id);
+    if (g) resetLayoutCellState(g.cols * g.rows);
     updateLayoutCanvas();
   });
 
@@ -930,6 +1107,8 @@ function init() {
   setupExportScreen();
   setupSidebar();
   setupPythonStatusListener();
+  initDocumentDragHandlers();
+  setupResizeListener();
 }
 
 document.addEventListener('DOMContentLoaded', init);
