@@ -98,9 +98,16 @@ const state = {
     gridId:         '2x2',
     captionProject: '',
     captionStudio:  '',
-    showFilename:   false,
-    showWatermark:  true,
-    cellStills:     [],
+    showFilename:      false,
+    showWatermark:     true,
+    captionMode:       'none',
+    watermarkDataUrl:  null,
+    watermarkFilename: null,
+    watermarkCorner:   'tr',
+    watermarkMode:     'canvas',
+    watermarkSize:     15,
+    watermarkOpacity:  1.0,
+    cellStills:        [],
     cellOffsets:    [],
     cellScales:     [],
     cellLocked:     [],
@@ -152,7 +159,8 @@ function switchScreen(id) {
     el.classList.toggle('active', el.id === `screen-${id}`);
   });
 
-  if (id === 'layout') {
+  if (id === 'social') {
+    needsCanvasRefresh = false;
     updateLayoutCanvas();
   }
 
@@ -181,6 +189,7 @@ function setStatusBox(type, text) {
   box.className = 'status-box';
   if (type === 'connected') box.classList.add('connected');
   if (type === 'error')     box.classList.add('error');
+  if (type === 'warning')   box.classList.add('warning');
   $('status-text').textContent = text;
 }
 
@@ -210,19 +219,8 @@ async function handleConnect() {
     $('btn-disconnect').hidden = false;
 
     await loadAlbums();
-
-    if (state.project.stillAlbums.length > 0) {
-      state.gallery.selectedAlbumIndex = 0;
-      state.gallery.selectedAlbumType  = 'still';
-      const firstItem = document.querySelector('.album-item[data-album-type="still"][data-album-index="0"]');
-      if (firstItem) {
-        document.querySelectorAll('.album-item').forEach(el => el.classList.remove('active'));
-        firstItem.classList.add('active');
-      }
-      await loadStills(0, 'still');
-    } else {
-      switchScreen('gallery');
-    }
+    await loadSessionsPanel();
+    // Stay on connect screen — user chooses action from sessions panel
   } catch (err) {
     setStatusBox('error', err.message);
     btn.disabled = false;
@@ -257,6 +255,7 @@ function handleDisconnect() {
   $('btn-disconnect').hidden = true;
 
   setStatusBox('', 'Not connected to DaVinci Resolve');
+  $('sessions-panel').hidden = true;
   switchScreen('connect');
 }
 
@@ -376,7 +375,7 @@ async function loadStills(albumIndex, albumType) {
   state.gallery.selectedStills   = [];
 
   showHealthNotice('unknown', 0, '');
-  switchScreen('gallery');
+  if (!_restoringSession) switchScreen('gallery');
 
   const grid = $('still-grid');
   grid.innerHTML = 'Loading stills...';
@@ -400,7 +399,7 @@ async function loadStills(albumIndex, albumType) {
     console.error('getStills error:', res.error);
     grid.innerHTML = res.error ?? 'Failed to load stills';
     updateGalleryCount();
-    return;
+    return false;
   }
 
   const health  = res.data?.health       ?? 'unknown';
@@ -421,6 +420,7 @@ async function loadStills(albumIndex, albumType) {
   state.gallery.selectedStillIds = [];
   renderStillGrid(state.gallery.stills);
   updateGalleryCount();
+  return true;
 }
 
 function renderStillGrid(stills) {
@@ -460,7 +460,7 @@ function renderStillGrid(stills) {
     check.className = 'still-card-check';
     card.appendChild(check);
 
-    card.addEventListener('click', () => handleStillClick(index));
+    card.addEventListener('click', () => { handleStillClick(index); triggerAutoSave(); });
     grid.appendChild(card);
   });
 }
@@ -484,6 +484,7 @@ function handleStillClick(index) {
   if (card) card.classList.toggle('selected', ids.includes(index));
   syncSelectedStills();
   updateGalleryCount();
+  updateSocialFromGallery();
 }
 
 function handleSelectAll() {
@@ -491,6 +492,8 @@ function handleSelectAll() {
   $('still-grid').querySelectorAll('.still-card').forEach(c => c.classList.add('selected'));
   syncSelectedStills();
   updateGalleryCount();
+  updateSocialFromGallery();
+  triggerAutoSave();
 }
 
 function handleClearSelection() {
@@ -498,6 +501,8 @@ function handleClearSelection() {
   $('still-grid').querySelectorAll('.still-card').forEach(c => c.classList.remove('selected'));
   syncSelectedStills();
   updateGalleryCount();
+  updateSocialFromGallery();
+  triggerAutoSave();
 }
 
 function updateGalleryCount() {
@@ -507,11 +512,18 @@ function updateGalleryCount() {
   el.textContent = selected > 0
     ? `${selected} of ${total} selected`
     : `${total} still${total !== 1 ? 's' : ''}`;
+
+  const goBtn = $('btn-go-social');
+  if (goBtn) {
+    goBtn.style.display = selected === 0 ? 'none' : '';
+    goBtn.textContent   = `${selected} ready for Social →`;
+  }
 }
 
 function setupGalleryToolbar() {
   $('btn-select-all').addEventListener('click', handleSelectAll);
   $('btn-clear-selection').addEventListener('click', handleClearSelection);
+  $('btn-go-social').addEventListener('click', () => switchScreen('social'));
 }
 
 // ── Generic picker ─────────────────────────────────────────────────────────
@@ -566,8 +578,13 @@ function setupToggle(id, onChange) {
 
 // ── Layout screen ──────────────────────────────────────────────────────────
 
-let _dragState  = null;  // active pan drag: { img, cellEl, cellIndex, startX, startY, startOX, startOY }
-let _zoomTimers = {};   // per-cell timeout ids for zoom badge fade
+let _dragState    = null;  // active pan drag
+let _zoomTimers   = {};    // per-cell timeout ids for zoom badge fade
+let _autoSaveTimer   = null;
+let _saveStatusTimer = null;
+let watermarkLibrary    = []; // cached list from watermark:list
+let needsCanvasRefresh  = false;
+let _restoringSession   = false;
 
 function resetLayoutCellState(cellCount) {
   const sel = state.gallery.selectedStills;
@@ -575,6 +592,24 @@ function resetLayoutCellState(cellCount) {
   state.layout.cellOffsets = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
   state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
   state.layout.cellLocked  = Array.from({ length: cellCount }, () => false);
+}
+
+function updateSocialFromGallery() {
+  const sel        = state.gallery.selectedStills;
+  const grid       = GRIDS.find(g => g.id === state.layout.gridId);
+  const cellCount  = grid ? grid.cols * grid.rows : Math.max(state.layout.cellStills.length, 1);
+  const prevLocked = state.layout.cellLocked;
+
+  state.layout.cellStills  = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
+  state.layout.cellOffsets = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
+  state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
+  state.layout.cellLocked  = Array.from({ length: cellCount }, (_, i) => prevLocked[i] ?? false);
+
+  if (state.ui.activeScreen === 'social') {
+    updateLayoutCanvas();
+  } else {
+    needsCanvasRefresh = true;
+  }
 }
 
 function assignStillToCell(cellIndex) {
@@ -585,7 +620,7 @@ function assignStillToCell(cellIndex) {
   updateLayoutCanvas();
 }
 
-function buildLayoutCell(i, cellW, cellH) {
+function buildLayoutCell(i, cellW, cellH, canvasW) {
   const cell   = document.createElement('div');
   cell.className = 'layout-cell';
   cell.dataset.cellIndex = String(i);
@@ -667,7 +702,14 @@ function buildLayoutCell(i, cellW, cellH) {
         zoomBadge.classList.add('visible');
         if (_zoomTimers[i]) clearTimeout(_zoomTimers[i]);
         _zoomTimers[i] = setTimeout(() => zoomBadge.classList.remove('visible'), 1500);
+        triggerAutoSave();
       }, { passive: false });
+
+      // Per-cell watermark
+      if (state.layout.showWatermark && state.layout.watermarkDataUrl &&
+          state.layout.watermarkMode === 'each') {
+        cell.appendChild(buildCellWatermark(canvasW));
+      }
 
       cell.style.cursor = locked ? 'default' : 'grab';
 
@@ -684,6 +726,16 @@ function buildLayoutCell(i, cellW, cellH) {
           cell.style.cursor = 'grabbing';
         });
       }
+    }
+
+    // Per-cell filename label (overlay mode only)
+    if (state.layout.captionMode === 'overlay' && state.layout.showFilename) {
+      const filenameEl = document.createElement('div');
+      filenameEl.className = 'layout-cell-filename';
+      const label = still.label ?? still.displayLabel ?? `Still ${i + 1}`;
+      const tc    = still.recordTc ?? still.record_tc ?? '';
+      filenameEl.textContent = tc ? `${label}  ${tc}` : label;
+      cell.appendChild(filenameEl);
     }
 
     const stillIdx  = state.gallery.selectedStills.indexOf(still);
@@ -704,6 +756,7 @@ function buildLayoutCell(i, cellW, cellH) {
     e.stopPropagation();
     state.layout.cellLocked[i] = !state.layout.cellLocked[i];
     updateLayoutCanvas();
+    triggerAutoSave();
   });
   cell.appendChild(lockBtn);
 
@@ -731,6 +784,250 @@ function initDocumentDragHandlers() {
       _dragState.cellEl.style.cursor = 'grab';
     }
     _dragState = null;
+    triggerAutoSave();
+  });
+}
+
+// ── Caption builders ───────────────────────────────────────────────────────
+
+function buildCaptionBar(w, barH) {
+  const bar = document.createElement('div');
+  bar.className = 'layout-caption-bar';
+  bar.style.width  = `${w}px`;
+  bar.style.height = `${barH}px`;
+
+  const left = document.createElement('div');
+  left.className = 'caption-bar-left';
+
+  const project = state.layout.captionProject.trim();
+  const studio  = state.layout.captionStudio.trim();
+
+  if (project) {
+    const pEl = document.createElement('div');
+    pEl.className   = 'caption-text-project';
+    pEl.textContent = project;
+    left.appendChild(pEl);
+  }
+  if (studio) {
+    const sEl = document.createElement('div');
+    sEl.className   = 'caption-text-studio';
+    sEl.textContent = studio;
+    left.appendChild(sEl);
+  }
+  bar.appendChild(left);
+
+  if (state.layout.showFilename) {
+    const firstStill = state.layout.cellStills[0];
+    if (firstStill) {
+      const right = document.createElement('div');
+      right.className = 'caption-bar-right';
+      const label = firstStill.label ?? firstStill.displayLabel ?? '';
+      const tc    = firstStill.recordTc ?? firstStill.record_tc ?? '';
+      right.textContent = tc ? `${label} — ${tc}` : label;
+      bar.appendChild(right);
+    }
+  }
+
+  return bar;
+}
+
+function buildCaptionOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'layout-caption-overlay';
+
+  const project = state.layout.captionProject.trim();
+  const studio  = state.layout.captionStudio.trim();
+
+  if (!project && !studio) {
+    overlay.style.display = 'none';
+    return overlay;
+  }
+  if (project) {
+    const pEl = document.createElement('div');
+    pEl.className   = 'caption-text-project';
+    pEl.textContent = project;
+    overlay.appendChild(pEl);
+  }
+  if (studio) {
+    const sEl = document.createElement('div');
+    sEl.className   = 'caption-text-studio';
+    sEl.textContent = studio;
+    overlay.appendChild(sEl);
+  }
+  return overlay;
+}
+
+function renderCaption() {
+  const canvasEl = $('layout-canvas');
+  if (!canvasEl) return;
+  const mode    = state.layout.captionMode;
+  const project = state.layout.captionProject.trim();
+  const studio  = state.layout.captionStudio.trim();
+
+  if (mode === 'bar') {
+    const bar = canvasEl.querySelector('.layout-caption-bar');
+    if (!bar) return;
+    const left = bar.querySelector('.caption-bar-left');
+    if (left) {
+      left.innerHTML = '';
+      if (project) {
+        const pEl = document.createElement('div');
+        pEl.className   = 'caption-text-project';
+        pEl.textContent = project;
+        left.appendChild(pEl);
+      }
+      if (studio) {
+        const sEl = document.createElement('div');
+        sEl.className   = 'caption-text-studio';
+        sEl.textContent = studio;
+        left.appendChild(sEl);
+      }
+    }
+    let right = bar.querySelector('.caption-bar-right');
+    if (state.layout.showFilename) {
+      const firstStill = state.layout.cellStills[0];
+      if (firstStill) {
+        if (!right) {
+          right = document.createElement('div');
+          right.className = 'caption-bar-right';
+          bar.appendChild(right);
+        }
+        const label = firstStill.label ?? firstStill.displayLabel ?? '';
+        const tc    = firstStill.recordTc ?? firstStill.record_tc ?? '';
+        right.textContent = tc ? `${label} — ${tc}` : label;
+      }
+    } else if (right) {
+      right.remove();
+    }
+  } else if (mode === 'overlay') {
+    const overlay = canvasEl.querySelector('.layout-caption-overlay');
+    if (!overlay) return;
+    overlay.innerHTML = '';
+    if (!project && !studio) {
+      overlay.style.display = 'none';
+      return;
+    }
+    overlay.style.display = '';
+    if (project) {
+      const pEl = document.createElement('div');
+      pEl.className   = 'caption-text-project';
+      pEl.textContent = project;
+      overlay.appendChild(pEl);
+    }
+    if (studio) {
+      const sEl = document.createElement('div');
+      sEl.className   = 'caption-text-studio';
+      sEl.textContent = studio;
+      overlay.appendChild(sEl);
+    }
+  }
+}
+
+// ── Watermark builders ─────────────────────────────────────────────────────
+
+function buildCanvasWatermark(w, h) {
+  const url = state.layout.watermarkDataUrl;
+  console.log('[Watermark] Canvas img src:', url);
+  const wm = document.createElement('img');
+  wm.className    = 'layout-watermark';
+  wm.src          = url;
+  wm.alt          = '';
+  const sz        = Math.round(w * state.layout.watermarkSize / 100);
+  wm.style.width  = `${sz}px`;
+  wm.style.height = 'auto';
+  wm.style.opacity = String(state.layout.watermarkOpacity);
+  _applyWatermarkCorner(wm, state.layout.watermarkCorner, 10);
+  return wm;
+}
+
+function buildCellWatermark(canvasW) {
+  const url = state.layout.watermarkDataUrl;
+  console.log('[Watermark] Cell img src:', url);
+  const wm = document.createElement('img');
+  wm.className    = 'layout-watermark';
+  wm.src          = url;
+  wm.alt          = '';
+  const sz        = Math.round(canvasW * state.layout.watermarkSize / 100);
+  wm.style.width  = `${sz}px`;
+  wm.style.height = 'auto';
+  wm.style.opacity = String(state.layout.watermarkOpacity);
+  _applyWatermarkCorner(wm, state.layout.watermarkCorner, 5);
+  return wm;
+}
+
+function _applyWatermarkCorner(el, corner, margin) {
+  el.style.top    = corner.startsWith('t') ? `${margin}px` : 'auto';
+  el.style.bottom = corner.startsWith('b') ? `${margin}px` : 'auto';
+  el.style.left   = corner.endsWith('l')   ? `${margin}px` : 'auto';
+  el.style.right  = corner.endsWith('r')   ? `${margin}px` : 'auto';
+}
+
+// ── Watermark controls setup ───────────────────────────────────────────────
+
+function setupWatermarkControls() {
+  // ── Library add button ────────────────────────────────────────────────
+  $('btn-add-logo').addEventListener('click', () => {
+    $('input-watermark-file').click();
+  });
+
+  $('input-watermark-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    console.log('[Watermark] File selected:', file.name, file.type, file.size, 'bytes');
+    const reader = new FileReader();
+    reader.onerror = err => console.error('[Watermark] FileReader error:', err);
+    reader.onload  = async ev => {
+      const dataUrl = ev.target.result;
+      console.log('[Watermark] dataURL loaded, length:', dataUrl.length);
+      const res = await window.gradeshare.watermark.saveToLibrary(dataUrl, file.name);
+      if (!res.ok) { console.error('[Watermark] saveToLibrary failed:', res.error); return; }
+      console.log('[Watermark] Saved to library:', res.filename);
+      await loadWatermarkLibrary();
+      const item = watermarkLibrary.find(w => w.filename === res.filename);
+      if (item) selectWatermarkFromLibrary(item);
+      e.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ── Corner picker ─────────────────────────────────────────────────────
+  const cornerEl = $('watermark-corner-picker');
+  [
+    { id: 'tl', label: '↖' },
+    { id: 'tr', label: '↗' },
+    { id: 'bl', label: '↙' },
+    { id: 'br', label: '↘' },
+  ].forEach(c => {
+    const btn = document.createElement('button');
+    btn.className      = `corner-btn${state.layout.watermarkCorner === c.id ? ' active' : ''}`;
+    btn.dataset.corner = c.id;
+    btn.textContent    = c.label;
+    btn.addEventListener('click', () => {
+      cornerEl.querySelectorAll('.corner-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.layout.watermarkCorner = c.id;
+      updateLayoutCanvas();
+      triggerAutoSave();
+    });
+    cornerEl.appendChild(btn);
+  });
+
+  renderPicker('watermark-mode-picker', [
+    { id: 'canvas', label: 'Canvas'    },
+    { id: 'each',   label: 'Each cell' },
+  ], state.layout.watermarkMode, id => {
+    state.layout.watermarkMode = id;
+    updateLayoutCanvas();
+    triggerAutoSave();
+  });
+
+  const sizeSlider = $('watermark-size-slider');
+  const sizeValue  = $('watermark-size-value');
+  sizeSlider.addEventListener('input', () => {
+    state.layout.watermarkSize = parseFloat(sizeSlider.value);
+    sizeValue.textContent = `${state.layout.watermarkSize}%`;
+    updateLayoutCanvas();
+    triggerAutoSave();
   });
 }
 
@@ -739,7 +1036,7 @@ function setupResizeListener() {
   window.addEventListener('resize', () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (state.ui.activeScreen === 'layout') {
+      if (state.ui.activeScreen === 'social') {
         state.layout.cellOffsets = state.layout.cellOffsets.map(() => ({ x: 0, y: 0 }));
         state.layout.cellScales  = state.layout.cellScales.map(() => 1.0);
         updateLayoutCanvas();
@@ -753,15 +1050,15 @@ function updateLayoutCanvas() {
   const grid     = GRIDS.find(g => g.id === state.layout.gridId);
   if (!platform || !grid) return;
 
-  const gridEl  = $('layout-canvas');
-  const labelEl = $('layout-label');
-  if (!gridEl) return;
+  const canvasEl = $('layout-canvas');
+  const labelEl  = $('layout-label');
+  if (!canvasEl) return;
 
   const { cols, rows } = grid;
   const cellCount = cols * rows;
 
-  // Compute pixel dimensions — fit platform ratio within available space
-  const wrapEl = gridEl.closest('.layout-preview-wrap');
+  // Fit platform ratio within available space
+  const wrapEl = canvasEl.closest('.layout-preview-wrap');
   const maxW   = (wrapEl?.clientWidth  ?? 600) - 40;
   const maxH   = Math.min((wrapEl?.clientHeight ?? 500) - 40 - 26, window.innerHeight * 0.8);
   if (maxW <= 0 || maxH <= 0) return;
@@ -770,23 +1067,48 @@ function updateLayoutCanvas() {
   const w = maxW / ratio <= maxH ? Math.floor(maxW) : Math.floor(maxH * ratio);
   const h = maxW / ratio <= maxH ? Math.floor(maxW / ratio) : Math.floor(maxH);
 
-  const GAP   = 4;
+  const GAP  = 4;
+  const barH = state.layout.captionMode === 'bar' ? 60 : 0;
+  const gridH = h - barH;
   const cellW = Math.floor((w - GAP * (cols - 1)) / cols);
-  const cellH = Math.floor((h - GAP * (rows - 1)) / rows);
+  const cellH = Math.floor((gridH - GAP * (rows - 1)) / rows);
 
-  gridEl.style.width                = `${w}px`;
-  gridEl.style.height               = `${h}px`;
-  gridEl.style.gridTemplateColumns  = `repeat(${cols}, 1fr)`;
-  gridEl.style.gridTemplateRows     = `repeat(${rows}, 1fr)`;
+  // Canvas wrapper
+  canvasEl.style.width         = `${w}px`;
+  canvasEl.style.height        = `${h}px`;
+  canvasEl.style.display       = 'flex';
+  canvasEl.style.flexDirection = 'column';
+  canvasEl.innerHTML           = '';
 
-  // Initialise cell state if needed (first render or size mismatch)
+  // Inner CSS grid
+  const gridInnerEl = document.createElement('div');
+  gridInnerEl.className                 = 'layout-grid';
+  gridInnerEl.style.width               = `${w}px`;
+  gridInnerEl.style.height              = `${gridH}px`;
+  gridInnerEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  gridInnerEl.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
+  canvasEl.appendChild(gridInnerEl);
+
+  // Initialise cell state if needed
   if (state.layout.cellStills.length !== cellCount) {
     resetLayoutCellState(cellCount);
   }
 
-  gridEl.innerHTML = '';
   for (let i = 0; i < cellCount; i++) {
-    gridEl.appendChild(buildLayoutCell(i, cellW, cellH));
+    gridInnerEl.appendChild(buildLayoutCell(i, cellW, cellH, w));
+  }
+
+  // Caption
+  if (state.layout.captionMode === 'bar') {
+    canvasEl.appendChild(buildCaptionBar(w, barH));
+  } else if (state.layout.captionMode === 'overlay') {
+    canvasEl.appendChild(buildCaptionOverlay());
+  }
+
+  // Canvas-level watermark
+  if (state.layout.showWatermark && state.layout.watermarkDataUrl &&
+      state.layout.watermarkMode === 'canvas') {
+    canvasEl.appendChild(buildCanvasWatermark(w, h));
   }
 
   if (labelEl) {
@@ -802,6 +1124,7 @@ function setupLayoutScreen() {
     state.layout.cellOffsets = state.layout.cellOffsets.map(() => ({ x: 0, y: 0 }));
     state.layout.cellScales  = state.layout.cellScales.map(() => 1.0);
     updateLayoutCanvas();
+    triggerAutoSave();
   });
 
   const gridEl = $('grid-picker');
@@ -811,17 +1134,43 @@ function setupLayoutScreen() {
     const g = GRIDS.find(gr => gr.id === id);
     if (g) resetLayoutCellState(g.cols * g.rows);
     updateLayoutCanvas();
+    triggerAutoSave();
+  });
+
+  renderPicker('caption-mode-picker', [
+    { id: 'none',    label: 'None'    },
+    { id: 'bar',     label: 'Bar'     },
+    { id: 'overlay', label: 'Overlay' },
+  ], state.layout.captionMode, id => {
+    state.layout.captionMode = id;
+    updateLayoutCanvas();
+    triggerAutoSave();
   });
 
   $('caption-project').addEventListener('input', e => {
     state.layout.captionProject = e.target.value;
+    renderCaption();
+    triggerAutoSave();
   });
   $('caption-studio').addEventListener('input', e => {
     state.layout.captionStudio = e.target.value;
+    renderCaption();
+    triggerAutoSave();
   });
 
-  setupToggle('toggle-filename', on => { state.layout.showFilename = on; });
-  setupToggle('toggle-watermark', on => { state.layout.showWatermark = on; });
+  setupToggle('toggle-filename', on => {
+    state.layout.showFilename = on;
+    updateLayoutCanvas();
+    triggerAutoSave();
+  });
+  setupToggle('toggle-watermark', on => {
+    state.layout.showWatermark = on;
+    $('watermark-controls').hidden = !on;
+    updateLayoutCanvas();
+    triggerAutoSave();
+  });
+
+  setupWatermarkControls();
 }
 
 // ── Contact Sheet screen ───────────────────────────────────────────────────
@@ -1096,6 +1445,590 @@ function setupPythonStatusListener() {
   });
 }
 
+// ── Auto-save ──────────────────────────────────────────────────────────────
+
+function triggerAutoSave() {
+  if (!state.resolve.connected || !state.project.name) return;
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(autoSave, 1000);
+}
+
+async function autoSave() {
+  const projectName = state.project.name;
+  if (!projectName) return;
+  showSaveStatus('Saving…');
+  const data = buildSessionJSON(null);
+  const res  = await window.gradeshare.session.save(projectName, null, data);
+  if (res.ok) {
+    console.log('[Session] Autosaved at', data.savedAt);
+    showSaveStatus('Saved');
+  } else {
+    console.error('[Session] Autosave failed:', res.error);
+    showSaveStatus('');
+  }
+}
+
+function showSaveStatus(text) {
+  const el = $('save-status');
+  if (!el) return;
+  el.textContent = text;
+  if (!text) { el.classList.remove('visible'); return; }
+  el.classList.add('visible');
+  if (text === 'Saving…') return;
+  clearTimeout(_saveStatusTimer);
+  _saveStatusTimer = setTimeout(() => el.classList.remove('visible'), 2000);
+}
+
+function buildSessionJSON(sessionName) {
+  const sel = state.gallery.selectedStills;
+  return {
+    version:     1,
+    savedAt:     new Date().toISOString(),
+    name:        sessionName ?? null,
+    projectName: state.project.name ?? '',
+    layout: {
+      platformId:        state.layout.platformId,
+      gridId:            state.layout.gridId,
+      captionMode:       state.layout.captionMode,
+      captionProject:    state.layout.captionProject,
+      captionStudio:     state.layout.captionStudio,
+      showFilename:      state.layout.showFilename,
+      showWatermark:     state.layout.showWatermark,
+      watermarkFilename: state.layout.watermarkFilename ?? null,
+      watermarkCorner:   state.layout.watermarkCorner,
+      watermarkMode:     state.layout.watermarkMode,
+      watermarkSize:     state.layout.watermarkSize,
+      watermarkOpacity:  state.layout.watermarkOpacity,
+    },
+    gallery: {
+      selectedAlbumIndex: state.gallery.selectedAlbumIndex,
+      selectedAlbumType:  state.gallery.selectedAlbumType,
+      selectedAlbumName:  (state.gallery.selectedAlbumType === 'still'
+        ? state.project.stillAlbums
+        : state.project.powerGradeAlbums
+      )[state.gallery.selectedAlbumIndex]?.name ?? null,
+      selectedStillPaths: sel.map(s => s.imagePath ?? s.image_path ?? s.path ?? ''),
+    },
+    cells: {
+      offsets:          state.layout.cellOffsets,
+      scales:           state.layout.cellScales,
+      locked:           state.layout.cellLocked,
+      stillAssignments: state.layout.cellStills.map(s => {
+        if (!s) return null;
+        const idx = sel.indexOf(s);
+        return idx >= 0 ? idx : null;
+      }),
+    },
+  };
+}
+
+// ── Watermark library ──────────────────────────────────────────────────────
+
+async function loadWatermarkLibrary() {
+  const res = await window.gradeshare.watermark.list();
+  if (!res.ok) return;
+  watermarkLibrary = res.watermarks ?? [];
+  renderWatermarkLibrary();
+}
+
+function renderWatermarkLibrary() {
+  const row    = $('watermark-library-row');
+  const addBtn = $('btn-add-logo');
+  if (!row || !addBtn) return;
+  row.querySelectorAll('.watermark-thumb').forEach(el => el.remove());
+
+  watermarkLibrary.forEach(item => {
+    const thumb = document.createElement('div');
+    thumb.className    = 'watermark-thumb';
+    thumb.dataset.filename = item.filename;
+    if (state.layout.watermarkFilename === item.filename) thumb.classList.add('selected');
+
+    const img = document.createElement('img');
+    img.src = item.fileUrl;
+    img.alt = item.filename;
+    thumb.appendChild(img);
+
+    const delBtn = document.createElement('button');
+    delBtn.className   = 'watermark-thumb-delete';
+    delBtn.textContent = '×';
+    delBtn.title       = 'Remove from library';
+    delBtn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await window.gradeshare.watermark.delete(item.filename);
+      if (state.layout.watermarkFilename === item.filename) {
+        state.layout.watermarkDataUrl   = null;
+        state.layout.watermarkFilename  = null;
+        updateLayoutCanvas();
+      }
+      await loadWatermarkLibrary();
+    });
+    thumb.appendChild(delBtn);
+
+    thumb.addEventListener('click', () => selectWatermarkFromLibrary(item));
+    row.insertBefore(thumb, addBtn);
+  });
+}
+
+function selectWatermarkFromLibrary(item) {
+  state.layout.watermarkDataUrl  = item.fileUrl;
+  state.layout.watermarkFilename = item.filename;
+  console.log('[Watermark] Selected:', item.filename, 'URL:', item.fileUrl);
+  renderWatermarkLibrary();
+  updateLayoutCanvas();
+  triggerAutoSave();
+}
+
+// ── Sessions panel ─────────────────────────────────────────────────────────
+
+async function loadSessionsPanel() {
+  const projectName = state.project.name;
+  if (!projectName) return;
+  const [autosaveRes, namedRes] = await Promise.all([
+    window.gradeshare.session.loadAutosave(projectName),
+    window.gradeshare.session.listNamed(projectName),
+  ]);
+  renderSessionsPanel(
+    autosaveRes.ok ? autosaveRes.state : null,
+    namedRes.ok    ? namedRes.currentProjectSessions : [],
+    namedRes.ok    ? namedRes.otherProjectSessions   : [],
+  );
+}
+
+function renderSessionsPanel(autosave, named, otherSessions = []) {
+  const panel          = $('sessions-panel');
+  const content        = $('sessions-content');
+  const titleEl        = $('sessions-title');
+  const currentProject = state.project.name ?? '';
+  titleEl.textContent  = `Sessions — ${currentProject || 'Project'}`;
+  content.innerHTML    = '';
+
+  // ── Autosave row ──────────────────────────────────────────────────────────
+  if (autosave) {
+    const autosaveProject = autosave.projectName ?? null;
+    const mismatch        = !!(autosaveProject && autosaveProject !== currentProject);
+
+    const row = document.createElement('div');
+    row.className = 'session-autosave-row' + (mismatch ? ' session-autosave-mismatch' : '');
+
+    const ts = document.createElement('span');
+    ts.className   = 'session-timestamp';
+    ts.textContent = new Date(autosave.savedAt).toLocaleString();
+
+    const btn = document.createElement('button');
+    btn.style.fontSize = 'var(--font-size-xs)';
+    btn.style.padding  = '4px 10px';
+
+    if (mismatch) {
+      btn.className   = 'btn-session-amber';
+      btn.textContent = `Resume session from '${autosaveProject}'`;
+      btn.addEventListener('click', () => {
+        showSessionMismatchNotice(autosaveProject, currentProject);
+        restoreSession(autosave);
+      });
+
+      const mainRow = document.createElement('div');
+      mainRow.className = 'session-autosave-main';
+      mainRow.appendChild(btn);
+      mainRow.appendChild(ts);
+      row.appendChild(mainRow);
+
+      const currentLine = document.createElement('span');
+      currentLine.className   = 'session-mismatch-current-project';
+      currentLine.textContent = `Current project: ${currentProject}`;
+      row.appendChild(currentLine);
+    } else {
+      btn.className   = 'btn-primary';
+      btn.textContent = 'Resume last session';
+      btn.addEventListener('click', () => restoreSession(autosave));
+      row.appendChild(ts);
+      row.appendChild(btn);
+    }
+
+    content.appendChild(row);
+  }
+
+  // ── Named sessions ────────────────────────────────────────────────────────
+  if (named.length > 0) {
+    const div = document.createElement('div');
+    div.className = 'session-divider';
+    content.appendChild(div);
+
+    named.forEach(sess => {
+      const sessProject = sess.projectName ?? null;
+      const mismatch    = !!(sessProject && sessProject !== currentProject);
+
+      const row = document.createElement('div');
+      row.className = 'session-named-row' + (mismatch ? ' session-named-mismatch' : '');
+
+      const mainRow = document.createElement('div');
+      mainRow.className = 'session-named-main-row';
+
+      const nameEl = document.createElement('span');
+      nameEl.className   = 'session-named-name';
+      nameEl.textContent = (mismatch ? '⚠ ' : '') + sess.name;
+
+      const tsEl = document.createElement('span');
+      tsEl.className   = 'session-timestamp';
+      tsEl.textContent = sess.savedAt ? new Date(sess.savedAt).toLocaleString() : '';
+
+      const loadBtn = document.createElement('button');
+      loadBtn.className   = mismatch ? 'btn-session-amber' : 'btn-subtle';
+      loadBtn.style.padding = '2px 8px';
+      loadBtn.textContent = 'Load';
+      loadBtn.addEventListener('click', async () => {
+        if (mismatch) showSessionMismatchNotice(sessProject, currentProject);
+        const res = await window.gradeshare.session.loadNamed(sess.path);
+        if (res.ok) restoreSession(res.state);
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.className   = 'session-delete-btn';
+      delBtn.textContent = '×';
+      delBtn.title       = 'Delete session';
+      delBtn.addEventListener('click', async () => {
+        await window.gradeshare.session.deleteNamed(sess.path);
+        await loadSessionsPanel();
+      });
+
+      mainRow.appendChild(nameEl);
+      mainRow.appendChild(tsEl);
+      mainRow.appendChild(loadBtn);
+      mainRow.appendChild(delBtn);
+      row.appendChild(mainRow);
+
+      if (mismatch) {
+        const mismatchLine = document.createElement('div');
+        mismatchLine.className   = 'session-mismatch-line';
+        mismatchLine.textContent = `Saved from project: ${sessProject} — current project is ${currentProject}`;
+        row.appendChild(mismatchLine);
+      }
+
+      content.appendChild(row);
+    });
+  }
+
+  // ── Sessions from other projects ──────────────────────────────────────────
+  if (otherSessions.length > 0) {
+    const div = document.createElement('div');
+    div.className = 'session-divider';
+    content.appendChild(div);
+
+    const otherHeader = document.createElement('div');
+    otherHeader.className   = 'session-other-header';
+    otherHeader.textContent = 'From other projects';
+    content.appendChild(otherHeader);
+
+    otherSessions.forEach(sess => {
+      const sessProject = sess.projectName ?? null;
+      const row = document.createElement('div');
+      row.className = 'session-named-row session-named-mismatch';
+
+      const mainRow = document.createElement('div');
+      mainRow.className = 'session-named-main-row';
+
+      const nameEl = document.createElement('span');
+      nameEl.className   = 'session-named-name';
+      nameEl.textContent = sess.name;
+
+      const tsEl = document.createElement('span');
+      tsEl.className   = 'session-timestamp';
+      tsEl.textContent = sess.savedAt ? new Date(sess.savedAt).toLocaleString() : '';
+
+      const loadBtn = document.createElement('button');
+      loadBtn.className     = 'btn-session-amber';
+      loadBtn.style.padding = '2px 8px';
+      loadBtn.textContent   = 'Load';
+      loadBtn.addEventListener('click', async () => {
+        if (sessProject) showSessionMismatchNotice(sessProject, currentProject);
+        const res = await window.gradeshare.session.loadNamed(sess.path);
+        if (res.ok) restoreSession(res.state);
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.className   = 'session-delete-btn';
+      delBtn.textContent = '×';
+      delBtn.title       = 'Delete session';
+      delBtn.addEventListener('click', async () => {
+        await window.gradeshare.session.deleteNamed(sess.path);
+        await loadSessionsPanel();
+      });
+
+      mainRow.appendChild(nameEl);
+      mainRow.appendChild(tsEl);
+      mainRow.appendChild(loadBtn);
+      mainRow.appendChild(delBtn);
+      row.appendChild(mainRow);
+
+      if (sessProject) {
+        const mismatchLine = document.createElement('div');
+        mismatchLine.className   = 'session-mismatch-line';
+        mismatchLine.textContent = `Saved from project: ${sessProject}`;
+        row.appendChild(mismatchLine);
+      }
+
+      content.appendChild(row);
+    });
+  }
+
+  // ── Save named session ────────────────────────────────────────────────────
+  const div2 = document.createElement('div');
+  div2.className = 'session-divider';
+  content.appendChild(div2);
+
+  const saveRow = document.createElement('div');
+  saveRow.className = 'session-save-row';
+  const nameInput = document.createElement('input');
+  nameInput.type        = 'text';
+  nameInput.className   = 'control-input session-name-input';
+  nameInput.placeholder = 'Session name…';
+  const saveBtn = document.createElement('button');
+  saveBtn.className   = 'btn-subtle';
+  saveBtn.textContent = 'Save';
+  saveBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) return;
+    const data = buildSessionJSON(name);
+    const res  = await window.gradeshare.session.save(state.project.name, name, data);
+    if (res.ok) { nameInput.value = ''; await loadSessionsPanel(); }
+  });
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveBtn.click(); });
+  saveRow.appendChild(nameInput);
+  saveRow.appendChild(saveBtn);
+  content.appendChild(saveRow);
+
+  // ── Start fresh ───────────────────────────────────────────────────────────
+  const freshBtn = document.createElement('button');
+  freshBtn.className   = 'btn-subtle session-fresh-btn';
+  freshBtn.textContent = 'Start fresh';
+  freshBtn.addEventListener('click', async () => {
+    if (state.project.stillAlbums.length > 0) {
+      state.gallery.selectedAlbumIndex = 0;
+      state.gallery.selectedAlbumType  = 'still';
+      const firstItem = document.querySelector('.album-item[data-album-type="still"][data-album-index="0"]');
+      if (firstItem) {
+        document.querySelectorAll('.album-item').forEach(el => el.classList.remove('active'));
+        firstItem.classList.add('active');
+      }
+      await loadStills(0, 'still');
+    } else {
+      switchScreen('gallery');
+    }
+  });
+  content.appendChild(freshBtn);
+
+  panel.hidden = false;
+}
+
+function showSessionMismatchNotice(sessionProjectName, currentProjectName) {
+  const content = $('sessions-content');
+  if (!content) return;
+  const existing = content.querySelector('.session-mismatch-notice');
+  if (existing) existing.remove();
+  const notice = document.createElement('div');
+  notice.className   = 'session-mismatch-notice';
+  notice.textContent = `Loading session from '${sessionProjectName}' into '${currentProjectName}' — stills will be re-fetched from current project`;
+  content.insertBefore(notice, content.firstChild);
+  setTimeout(() => {
+    notice.classList.add('fading');
+    setTimeout(() => notice.remove(), 500);
+  }, 4000);
+}
+
+// ── Session restore ─────────────────────────────────────────────────────────
+
+async function restoreSession(sessionData) {
+  const { layout: L, gallery: G, cells: C } = sessionData;
+
+  // 1. Restore layout state
+  state.layout.platformId       = L.platformId       ?? 'ig-portrait';
+  state.layout.gridId           = L.gridId           ?? '2x2';
+  state.layout.captionMode      = L.captionMode      ?? 'none';
+  state.layout.captionProject   = L.captionProject   ?? '';
+  state.layout.captionStudio    = L.captionStudio    ?? '';
+  state.layout.showFilename     = L.showFilename     ?? false;
+  state.layout.showWatermark    = L.showWatermark    ?? true;
+  state.layout.watermarkCorner  = L.watermarkCorner  ?? 'tr';
+  state.layout.watermarkMode    = L.watermarkMode    ?? 'canvas';
+  state.layout.watermarkSize    = L.watermarkSize    ?? 15;
+  state.layout.watermarkOpacity = L.watermarkOpacity ?? 1.0;
+
+  // 2. Restore watermark from library
+  if (L.watermarkFilename) {
+    const libItem = watermarkLibrary.find(w => w.filename === L.watermarkFilename);
+    if (libItem) {
+      state.layout.watermarkDataUrl  = libItem.fileUrl;
+      state.layout.watermarkFilename = libItem.filename;
+    }
+  } else {
+    state.layout.watermarkDataUrl  = null;
+    state.layout.watermarkFilename = null;
+  }
+
+  const albumIndex = G.selectedAlbumIndex;
+  const albumType  = G.selectedAlbumType ?? 'still';
+
+  if (albumIndex === null || albumIndex === undefined) {
+    syncRestoredControls(L);
+    switchScreen('social');
+    return;
+  }
+
+  // 3. Show loading indicator on connect screen
+  const versionStr    = state.resolve.version  ? ` ${state.resolve.version}`  : '';
+  const projectStr    = state.project.name     ? ` — ${state.project.name}`   : '';
+  const connectedText = `${state.resolve.productName ?? 'DaVinci Resolve'}${versionStr}${projectStr}`;
+  setStatusBox('connected', 'Restoring session…');
+
+  // 3a. Refresh album list so we can validate the index
+  const albumsRes = await window.gradeshare.getAlbums();
+  if (albumsRes.ok) {
+    state.project.stillAlbums      = albumsRes.data?.stillAlbums      ?? [];
+    state.project.powerGradeAlbums = albumsRes.data?.powerGradeAlbums ?? [];
+    renderSidebarList('still',      state.project.stillAlbums);
+    renderSidebarList('powergrade', state.project.powerGradeAlbums);
+  }
+
+  const albumList = albumType === 'powergrade'
+    ? state.project.powerGradeAlbums
+    : state.project.stillAlbums;
+
+  if (albumIndex >= albumList.length) {
+    const savedName = G.selectedAlbumName ?? `album ${albumIndex}`;
+    setStatusBox('warning', `Album "${savedName}" not found in current project`);
+    switchScreen('gallery');
+    return;
+  }
+
+  const currentAlbumName = albumList[albumIndex]?.name;
+  if (G.selectedAlbumName && currentAlbumName && currentAlbumName !== G.selectedAlbumName) {
+    showSaveStatus(`Album name changed: "${G.selectedAlbumName}" → "${currentAlbumName}"`);
+  }
+
+  // 4. Activate album in sidebar
+  state.gallery.selectedAlbumIndex = albumIndex;
+  state.gallery.selectedAlbumType  = albumType;
+  document.querySelectorAll('.album-item').forEach(el => el.classList.remove('active'));
+  const albumItem = document.querySelector(
+    `.album-item[data-album-type="${albumType}"][data-album-index="${albumIndex}"]`
+  );
+  if (albumItem) albumItem.classList.add('active');
+
+  // 5. Load stills without navigating away from the connect screen
+  _restoringSession = true;
+  let loadedOk;
+  try {
+    loadedOk = await loadStills(albumIndex, albumType);
+  } finally {
+    _restoringSession = false;
+  }
+
+  if (!loadedOk) {
+    setStatusBox('error', 'Could not restore session — album may have changed in Resolve');
+    switchScreen('gallery');
+    return;
+  }
+
+  // 6. Restore connect screen status
+  setStatusBox('connected', connectedText);
+
+  // 7. Match stills by basename in savedStillPaths order (temp dir may differ between sessions)
+  const savedPaths  = G.selectedStillPaths ?? [];
+  const basenameMap = new Map();
+  state.gallery.stills.forEach((still, idx) => {
+    const p    = still.imagePath ?? still.image_path ?? still.path ?? '';
+    const base = p.split('/').pop();
+    if (base && !basenameMap.has(base)) basenameMap.set(base, idx);
+  });
+
+  state.gallery.selectedStillIds = [];
+  savedPaths.forEach(savedPath => {
+    const base = savedPath.split('/').pop();
+    const idx  = basenameMap.get(base);
+    if (idx !== undefined && !state.gallery.selectedStillIds.includes(idx)) {
+      state.gallery.selectedStillIds.push(idx);
+    }
+  });
+  syncSelectedStills();
+  document.querySelectorAll('.still-card').forEach(card => {
+    const cIdx = parseInt(card.dataset.index, 10);
+    card.classList.toggle('selected', state.gallery.selectedStillIds.includes(cIdx));
+  });
+  updateGalleryCount();
+
+  // Warn if project changed and not all stills could be matched
+  if (sessionData.projectName && sessionData.projectName !== state.project.name) {
+    const matched  = state.gallery.selectedStillIds.length;
+    const expected = savedPaths.length;
+    if (expected > 0 && matched < expected) {
+      showSaveStatus(`Matched ${matched} of ${expected} stills`);
+    }
+  }
+
+  // 8. Sync cellStills from selection, then restore saved canvas state on top
+  updateSocialFromGallery();
+  const restoreGrid = GRIDS.find(g => g.id === state.layout.gridId);
+  const cellCount   = restoreGrid ? restoreGrid.cols * restoreGrid.rows : 1;
+  const pad = (arr, len, def) => {
+    const a = (arr ?? []).slice(0, len);
+    while (a.length < len) a.push(def());
+    return a;
+  };
+  state.layout.cellOffsets = pad(C?.offsets, cellCount, () => ({ x: 0, y: 0 }));
+  state.layout.cellScales  = pad(C?.scales,  cellCount, () => 1.0);
+  state.layout.cellLocked  = pad(C?.locked,  cellCount, () => false);
+
+  // 9. Sync UI controls then navigate to Social — canvas renders with restored state
+  syncRestoredControls(L);
+  switchScreen('social');
+}
+
+function syncRestoredControls(L) {
+  // Pickers
+  const pickerMap = {
+    'platform-picker':     L.platformId,
+    'grid-picker':         L.gridId,
+    'caption-mode-picker': L.captionMode,
+  };
+  Object.entries(pickerMap).forEach(([id, val]) => {
+    document.querySelectorAll(`#${id} .picker-btn`).forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.id === val);
+    });
+  });
+
+  // Text inputs
+  const proj = $('caption-project'); if (proj) proj.value = L.captionProject ?? '';
+  const stud = $('caption-studio');  if (stud) stud.value = L.captionStudio  ?? '';
+
+  // Toggles
+  setToggleState('toggle-filename',  L.showFilename  ?? false);
+  setToggleState('toggle-watermark', L.showWatermark ?? true);
+  const wmControls = $('watermark-controls');
+  if (wmControls) wmControls.hidden = !(L.showWatermark ?? true);
+
+  // Size slider
+  const sizeSlider = $('watermark-size-slider');
+  const sizeValue  = $('watermark-size-value');
+  if (sizeSlider) sizeSlider.value = String(L.watermarkSize ?? 15);
+  if (sizeValue)  sizeValue.textContent = `${L.watermarkSize ?? 15}%`;
+
+  // Watermark pickers
+  document.querySelectorAll('#watermark-mode-picker .picker-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.id === (L.watermarkMode ?? 'canvas'));
+  });
+  document.querySelectorAll('.corner-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.corner === (L.watermarkCorner ?? 'tr'));
+  });
+
+  renderWatermarkLibrary();
+}
+
+function setToggleState(id, on) {
+  const btn = $(id);
+  if (!btn) return;
+  btn.dataset.state = on ? 'on' : 'off';
+  btn.setAttribute('aria-checked', String(on));
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 
 function init() {
@@ -1109,6 +2042,7 @@ function init() {
   setupPythonStatusListener();
   initDocumentDragHandlers();
   setupResizeListener();
+  loadWatermarkLibrary();
 }
 
 document.addEventListener('DOMContentLoaded', init);

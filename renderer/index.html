@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;">
   <title>GradeShare</title>
 
   <!-- ── CSS custom properties mirroring config/theme.js ────────────────────
@@ -114,6 +114,7 @@
       <span class="titlebar-title">
         <span class="logo-grade">Grade</span><span class="logo-share">Share</span>
       </span>
+      <span id="save-status" class="save-status"></span>
     </div>
 
     <!-- ── Workspace (sidebar + main) ────────────────────────────────────── -->
@@ -152,7 +153,7 @@
       <nav id="top-nav">
         <button class="nav-tab active" data-screen="connect">Connect</button>
         <button class="nav-tab" data-screen="gallery">Gallery</button>
-        <button class="nav-tab" data-screen="layout">Layout</button>
+        <button class="nav-tab" data-screen="social">Social</button>
         <button class="nav-tab" data-screen="contactsheet">Contact Sheet</button>
         <button class="nav-tab" data-screen="export">Export</button>
       </nav>
@@ -179,6 +180,14 @@
             </div>
 
           </div>
+
+          <div id="sessions-panel" class="sessions-panel" hidden>
+            <div class="sessions-panel-header">
+              <span id="sessions-title" class="sessions-title">Sessions</span>
+            </div>
+            <div id="sessions-content" class="sessions-content"></div>
+          </div>
+
         </div>
 
         <!-- Gallery ──────────────────────────────────────────────────────── -->
@@ -189,6 +198,7 @@
             <div class="gallery-toolbar-actions">
               <button id="btn-select-all" class="btn-subtle">Select all</button>
               <button id="btn-clear-selection" class="btn-subtle">Clear</button>
+              <button id="btn-go-social" class="btn-go-social" hidden></button>
             </div>
           </div>
 
@@ -202,12 +212,12 @@
         </div>
 
         <!-- Layout ───────────────────────────────────────────────────────── -->
-        <div id="screen-layout" class="screen">
+        <div id="screen-social" class="screen">
           <div class="split-layout">
 
             <div class="split-preview">
               <div class="layout-preview-wrap">
-                <div id="layout-canvas" class="layout-grid"></div>
+                <div id="layout-canvas" class="layout-canvas-wrap"></div>
                 <div id="layout-label" class="layout-label"></div>
               </div>
             </div>
@@ -222,6 +232,11 @@
               <div class="controls-section">
                 <span class="control-label">Grid</span>
                 <div id="grid-picker" class="picker-row"></div>
+              </div>
+
+              <div class="controls-section">
+                <span class="control-label">Caption</span>
+                <div id="caption-mode-picker" class="picker-row"></div>
               </div>
 
               <div class="controls-section">
@@ -244,6 +259,33 @@
                 <span class="control-label">Show watermark</span>
                 <button id="toggle-watermark" class="toggle"
                         role="switch" aria-checked="true" data-state="on"></button>
+              </div>
+
+              <div id="watermark-controls" class="watermark-controls">
+                <div class="controls-section">
+                  <span class="control-label">Logo</span>
+                  <div id="watermark-library-row" class="watermark-library-row">
+                    <button id="btn-add-logo" class="watermark-add-btn" title="Add logo">+</button>
+                    <input id="input-watermark-file" type="file" accept=".png,.svg" hidden>
+                  </div>
+                  <p class="watermark-hint">PNG with transparency recommended. SVG also supported.</p>
+                </div>
+                <div class="controls-section">
+                  <span class="control-label">Corner</span>
+                  <div id="watermark-corner-picker" class="corner-picker"></div>
+                </div>
+                <div class="controls-section">
+                  <span class="control-label">Placement</span>
+                  <div id="watermark-mode-picker" class="picker-row"></div>
+                </div>
+                <div class="controls-section">
+                  <div class="control-label-row">
+                    <span class="control-label">Size</span>
+                    <span id="watermark-size-value" class="control-value">15%</span>
+                  </div>
+                  <input id="watermark-size-slider" type="range"
+                         min="3" max="30" step="0.5" value="15" class="size-slider">
+                </div>
               </div>
 
             </div>

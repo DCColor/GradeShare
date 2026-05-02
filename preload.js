@@ -43,6 +43,30 @@ contextBridge.exposeInMainWorld('gradeshare', {
       albumIndex, albumType, exportPath, format, prefix
     }),
 
+  // ── Session management ────────────────────────────────────────────────
+  session: {
+    save:         (projectName, sessionName, state) =>
+      ipcRenderer.invoke('session:save', { projectName, sessionName, state }),
+    loadAutosave: (projectName) =>
+      ipcRenderer.invoke('session:loadAutosave', { projectName }),
+    listNamed:    (projectName) =>
+      ipcRenderer.invoke('session:listNamed', { projectName }),
+    loadNamed:    (filePath) =>
+      ipcRenderer.invoke('session:loadNamed', { path: filePath }),
+    deleteNamed:  (filePath) =>
+      ipcRenderer.invoke('session:deleteNamed', { path: filePath }),
+  },
+
+  // ── Watermark library ─────────────────────────────────────────────────
+  watermark: {
+    saveToLibrary: (dataUrl, filename) =>
+      ipcRenderer.invoke('watermark:saveToLibrary', { dataUrl, filename }),
+    list:          () =>
+      ipcRenderer.invoke('watermark:list'),
+    delete:        (filename) =>
+      ipcRenderer.invoke('watermark:delete', { filename }),
+  },
+
   // ── Dialogs ───────────────────────────────────────────────────────────
 
   /** Open a folder picker dialog */

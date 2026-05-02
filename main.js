@@ -7,9 +7,11 @@
  */
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const path   = require('path');
-const { spawn } = require('child_process');
-const theme  = require('./config/theme');
+const path             = require('path');
+const fs               = require('fs');
+const { pathToFileURL } = require('url');
+const { spawn }        = require('child_process');
+const theme            = require('./config/theme');
 
 // ── Python sidecar ────────────────────────────────────────────────────────
 
@@ -178,6 +180,21 @@ ipcMain.handle('resolve:exportStills', async (event, { albumIndex, albumType, ex
   }
 });
 
+ipcMain.handle('watermark:save', async (event, { sourcePath }) => {
+  try {
+    const userDataDir    = app.getPath('userData');
+    const watermarksDir  = path.join(userDataDir, 'watermarks');
+    fs.mkdirSync(watermarksDir, { recursive: true });
+    const ext      = path.extname(sourcePath);
+    const filename  = `watermark_${Date.now()}${ext}`;
+    const destPath = path.join(watermarksDir, filename);
+    fs.copyFileSync(sourcePath, destPath);
+    return { ok: true, url: `file://${destPath}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('dialog:selectFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
@@ -193,6 +210,145 @@ ipcMain.handle('dialog:saveFile', async (event, { defaultName, filters }) => {
   });
   if (result.canceled) return { ok: false };
   return { ok: true, path: result.filePath };
+});
+
+// ── Session & watermark library helpers ───────────────────────────────────
+
+function appDataDir()    { return path.join(app.getPath('userData'), 'GradeShare'); }
+function watermarksDir() { return path.join(appDataDir(), 'watermarks'); }
+function sessionDir(projectName) {
+  const safe = projectName.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+  return path.join(appDataDir(), 'sessions', safe);
+}
+
+// ── Session IPC ───────────────────────────────────────────────────────────
+
+ipcMain.handle('session:save', async (event, { projectName, sessionName, state }) => {
+  try {
+    const dir = sessionDir(projectName);
+    fs.mkdirSync(dir, { recursive: true });
+    const filename = sessionName
+      ? `${sessionName.replace(/[^a-zA-Z0-9._\- ]/g, '_')}.json`
+      : 'autosave.json';
+    const filepath = path.join(dir, filename);
+    fs.writeFileSync(filepath, JSON.stringify(state, null, 2), 'utf8');
+    return { ok: true, path: filepath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('session:loadAutosave', async (event, { projectName }) => {
+  try {
+    const filepath = path.join(sessionDir(projectName), 'autosave.json');
+    if (!fs.existsSync(filepath)) return { ok: false };
+    return { ok: true, state: JSON.parse(fs.readFileSync(filepath, 'utf8')) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('session:listNamed', async (event, { projectName }) => {
+  try {
+    const sessionsRoot = path.join(appDataDir(), 'sessions');
+    const currentProjectSessions = [];
+    const otherProjectSessions   = [];
+
+    if (!fs.existsSync(sessionsRoot)) {
+      return { ok: true, currentProjectSessions, otherProjectSessions };
+    }
+
+    const projectFolders = fs.readdirSync(sessionsRoot, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+
+    for (const folder of projectFolders) {
+      const dir = path.join(sessionsRoot, folder);
+      const files = fs.readdirSync(dir)
+        .filter(f => f.endsWith('.json') && f !== 'autosave.json');
+
+      for (const f of files) {
+        const filepath = path.join(dir, f);
+        let entry;
+        try {
+          const data = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+          entry = { name: data.name ?? f.replace('.json', ''), savedAt: data.savedAt, projectName: data.projectName ?? null, path: filepath };
+        } catch {
+          entry = { name: f.replace('.json', ''), savedAt: null, projectName: null, path: filepath };
+        }
+        const safe = projectName.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+        if (folder === safe) {
+          currentProjectSessions.push(entry);
+        } else {
+          otherProjectSessions.push(entry);
+        }
+      }
+    }
+
+    return { ok: true, currentProjectSessions, otherProjectSessions };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('session:loadNamed', async (event, { path: filepath }) => {
+  try {
+    return { ok: true, state: JSON.parse(fs.readFileSync(filepath, 'utf8')) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('session:deleteNamed', async (event, { path: filepath }) => {
+  try {
+    fs.unlinkSync(filepath);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── Watermark library IPC ────────────────────────────────────────────────
+
+ipcMain.handle('watermark:saveToLibrary', async (event, { dataUrl, filename }) => {
+  try {
+    const dir      = watermarksDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const base64   = dataUrl.replace(/^data:[^;]+;base64,/, '');
+    const buf      = Buffer.from(base64, 'base64');
+    const safeName = `${Date.now()}_${filename.replace(/[^a-zA-Z0-9._\-]/g, '_')}`;
+    const dest     = path.join(dir, safeName);
+    fs.writeFileSync(dest, buf);
+    return { ok: true, filename: safeName, filePath: dest };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('watermark:list', async () => {
+  try {
+    const dir = watermarksDir();
+    if (!fs.existsSync(dir)) return { ok: true, watermarks: [] };
+    const watermarks = fs.readdirSync(dir)
+      .filter(f => /\.(png|svg)$/i.test(f))
+      .map(f => ({
+        filename: f,
+        filePath: path.join(dir, f),
+        fileUrl:  pathToFileURL(path.join(dir, f)).href,
+      }));
+    return { ok: true, watermarks };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('watermark:delete', async (event, { filename }) => {
+  try {
+    fs.unlinkSync(path.join(watermarksDir(), filename));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 });
 
 // ── Window ────────────────────────────────────────────────────────────────
