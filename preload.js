@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('gradeshare', {
   refresh: () =>
     ipcRenderer.invoke('resolve:refresh'),
 
+  /** Force-refresh gallery and album object references from Resolve */
+  refreshAlbums: () =>
+    ipcRenderer.invoke('resolve:refreshAlbums'),
+
   /** Create a new named still album in Resolve */
   createAlbum: (name) => {
     console.log('createAlbum called with: ' + name);

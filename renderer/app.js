@@ -381,22 +381,15 @@ async function loadStills(albumIndex, albumType) {
   grid.innerHTML = 'Loading stills...';
   updateGalleryCount();
 
-  console.log('Calling getStills with albumIndex:', albumIndex, 'albumType:', albumType);
   const res = await window.gradeshare.getStills(albumIndex, albumType);
-  console.log('getStills response:', JSON.stringify(res));
-  console.log('result.ok:', res.ok);
-  console.log('result.data:', res.data);
-  if (res.data) {
-    console.log('result.data.stills:', res.data.stills);
-    console.log('result.data.count:', res.data.count);
-    console.log('result.data.health:', res.data.health);
-    console.log('result.data.message:', res.data.message);
-    console.log('result.data.loadedCount:', res.data.loadedCount, '/ totalCount:', res.data.totalCount);
-  }
+  console.log('[loadStills] Raw IPC response:', JSON.stringify(res));
+  console.log('[loadStills] response.ok:', res.ok);
+  console.log('[loadStills] response.data:', JSON.stringify(res.data));
+  console.log('[loadStills] stills count:', res.data?.stills?.length);
+  if (!res.ok) console.log('[loadStills] Error:', res.error);
   state.gallery.loading = false;
 
   if (!res.ok) {
-    console.error('getStills error:', res.error);
     grid.innerHTML = res.error ?? 'Failed to load stills';
     updateGalleryCount();
     return false;
@@ -408,9 +401,25 @@ async function loadStills(albumIndex, albumType) {
   updateAlbumHealthDot(albumType, albumIndex, health);
   showHealthNotice(health, missing, message);
 
-  const stills = res.data?.stills ?? res.data ?? [];
+  let stills = res.data?.stills ?? res.data ?? [];
+
+  // Recovery: if the export produced no stills, force-refresh album references
+  // in Python and retry once — stale handles are the most common cause.
   if (Array.isArray(stills) && stills.length === 0) {
-    console.log('Stills array is empty');
+    console.log('[loadStills] Empty stills on first attempt — retrying after refreshAlbums');
+    const refreshRes = await window.gradeshare.refreshAlbums();
+    if (refreshRes.ok) {
+      state.project.stillAlbums      = refreshRes.data?.stillAlbums      ?? [];
+      state.project.powerGradeAlbums = refreshRes.data?.powerGradeAlbums ?? [];
+      renderSidebarList('still',      state.project.stillAlbums);
+      renderSidebarList('powergrade', state.project.powerGradeAlbums);
+    }
+    const res2 = await window.gradeshare.getStills(albumIndex, albumType);
+    console.log('[loadStills] Retry response:', JSON.stringify(res2));
+    if (res2.ok) {
+      stills = res2.data?.stills ?? res2.data ?? [];
+      console.log(`[loadStills] Retry produced ${stills.length} stills`);
+    }
   } else if (Array.isArray(stills) && stills.length > 0) {
     console.log(`Rendering ${stills.length} stills`);
     console.log('First still object:', JSON.stringify(stills[0]));
@@ -1317,7 +1326,7 @@ async function handleExport() {
 
 // ── Sidebar — refresh ──────────────────────────────────────────────────────
 
-async function handleRefresh(btn) {
+async function handleRefresh(btn, refreshType) {
   btn.classList.add('spinning');
   btn.disabled = true;
 
@@ -1331,9 +1340,9 @@ async function handleRefresh(btn) {
     renderSidebarList('still',      state.project.stillAlbums);
     renderSidebarList('powergrade', state.project.powerGradeAlbums);
 
-    // If an album is currently selected, reload its stills with the fresh data
+    // Only reload stills if the active album matches the section that was refreshed
     const { selectedAlbumIndex, selectedAlbumType } = state.gallery;
-    if (selectedAlbumIndex !== null) {
+    if (selectedAlbumIndex !== null && selectedAlbumType === refreshType) {
       await loadStills(selectedAlbumIndex, selectedAlbumType);
     }
   } finally {
@@ -1396,8 +1405,8 @@ function setupNewAlbumModal() {
 
 function setupSidebar() {
   $('btn-new-album').addEventListener('click', showNewAlbumModal);
-  $('btn-refresh').addEventListener('click', e => handleRefresh(e.currentTarget));
-  $('btn-refresh-powergrade').addEventListener('click', e => handleRefresh(e.currentTarget));
+  $('btn-refresh').addEventListener('click', e => handleRefresh(e.currentTarget, 'still'));
+  $('btn-refresh-powergrade').addEventListener('click', e => handleRefresh(e.currentTarget, 'powergrade'));
   $('btn-dismiss-health-notice').addEventListener('click', () => {
     $('gallery-health-notice').hidden = true;
   });
@@ -1437,7 +1446,7 @@ function setupPythonStatusListener() {
       setStatusBox('error', 'Lost connection to DaVinci Resolve');
 
       const btn = $('btn-connect');
-      btn.disabled  = false;
+      btn.disabled    = false;
       btn.textContent = 'Reconnect';
       btn.classList.remove('btn-connected');
       $('btn-disconnect').hidden = true;
@@ -1879,13 +1888,18 @@ async function restoreSession(sessionData) {
   const connectedText = `${state.resolve.productName ?? 'DaVinci Resolve'}${versionStr}${projectStr}`;
   setStatusBox('connected', 'Restoring session…');
 
-  // 3a. Refresh album list so we can validate the index
+  // 3a. Populate sidebar album lists from the fresh Python process.
+  //     The bridge is always restarted on connect, so references are never stale.
   const albumsRes = await window.gradeshare.getAlbums();
+  console.log('[Restore] getAlbums result:', JSON.stringify(albumsRes));
   if (albumsRes.ok) {
     state.project.stillAlbums      = albumsRes.data?.stillAlbums      ?? [];
     state.project.powerGradeAlbums = albumsRes.data?.powerGradeAlbums ?? [];
     renderSidebarList('still',      state.project.stillAlbums);
     renderSidebarList('powergrade', state.project.powerGradeAlbums);
+    console.log('[Restore] Albums loaded, proceeding with stills load');
+  } else {
+    console.warn('[Restore] getAlbums failed:', albumsRes.error);
   }
 
   const albumList = albumType === 'powergrade'
@@ -1914,6 +1928,7 @@ async function restoreSession(sessionData) {
   if (albumItem) albumItem.classList.add('active');
 
   // 5. Load stills without navigating away from the connect screen
+  console.log('[Restore] Calling loadStills with albumIndex:', albumIndex, 'albumType:', albumType);
   _restoringSession = true;
   let loadedOk;
   try {
@@ -1931,23 +1946,63 @@ async function restoreSession(sessionData) {
   // 6. Restore connect screen status
   setStatusBox('connected', connectedText);
 
-  // 7. Match stills by basename in savedStillPaths order (temp dir may differ between sessions)
-  const savedPaths  = G.selectedStillPaths ?? [];
-  const basenameMap = new Map();
+  // 7. Match stills by filename-without-extension (temp dir and format may differ between sessions)
+  const stripExt  = name => name.replace(/\.[^.]+$/, '');
+  const savedPaths = G.selectedStillPaths ?? [];
+
+  console.log('[Restore] Saved paths:', savedPaths);
+  console.log('[Restore] Fresh stills:', state.gallery.stills.map(s => s.imagePath ?? s.image_path ?? s.path ?? ''));
+
+  // Build lookup: stem → gallery index
+  const stemMap  = new Map(); // e.g. "gs_preview_1.4.1" → idx
+  const labelMap = new Map(); // e.g. "1.4" → idx (fallback)
   state.gallery.stills.forEach((still, idx) => {
     const p    = still.imagePath ?? still.image_path ?? still.path ?? '';
-    const base = p.split('/').pop();
-    if (base && !basenameMap.has(base)) basenameMap.set(base, idx);
+    const stem = stripExt(p.split('/').pop());
+    if (stem && !stemMap.has(stem)) stemMap.set(stem, idx);
+    const lbl  = still.label ?? still.name ?? null;
+    if (lbl  && !labelMap.has(lbl))  labelMap.set(lbl, idx);
   });
 
+  // Pass 1: match on stem (filename without extension)
   state.gallery.selectedStillIds = [];
   savedPaths.forEach(savedPath => {
-    const base = savedPath.split('/').pop();
-    const idx  = basenameMap.get(base);
+    const savedStem = stripExt(savedPath.split('/').pop());
+    const freshStem = [...stemMap.keys()].find(s => s === savedStem) ?? null;
+    console.log(`[Restore] Stem compare - saved: ${savedStem} vs fresh: ${freshStem ?? '(no match)'}`);
+    const idx = stemMap.get(savedStem);
     if (idx !== undefined && !state.gallery.selectedStillIds.includes(idx)) {
       state.gallery.selectedStillIds.push(idx);
     }
   });
+
+  // Pass 2: label fallback if stem matching produced nothing
+  if (state.gallery.selectedStillIds.length === 0 && savedPaths.length > 0) {
+    console.log('[Restore] Stem match failed — trying label fallback');
+    console.log('[Restore] Fresh stems:', [...stemMap.keys()]);
+    console.log('[Restore] Saved stems:', savedPaths.map(p => stripExt(p.split('/').pop())));
+    savedPaths.forEach(savedPath => {
+      // Extract label-like portion: last dot-separated numeric segment (e.g. "1.4" from "gs_preview_1.4.1")
+      const stem  = stripExt(savedPath.split('/').pop());
+      const parts = stem.split('_');
+      const label = parts[parts.length - 1] ?? null;
+      if (!label) return;
+      const idx = labelMap.get(label);
+      console.log(`[Restore] Label fallback: stem="${stem}" label="${label}" → idx=${idx ?? 'none'}`);
+      if (idx !== undefined && !state.gallery.selectedStillIds.includes(idx)) {
+        state.gallery.selectedStillIds.push(idx);
+      }
+    });
+  }
+
+  // Pass 3: graceful fallback — select all stills in order
+  if (state.gallery.selectedStillIds.length === 0 && state.gallery.stills.length > 0) {
+    console.log('[Restore] No path matches found, selecting all stills as fallback');
+    state.gallery.selectedStillIds = state.gallery.stills.map((_, i) => i);
+  }
+
+  console.log(`[Restore] Matched ${state.gallery.selectedStillIds.length} of ${savedPaths.length} stills`);
+
   syncSelectedStills();
   document.querySelectorAll('.still-card').forEach(card => {
     const cIdx = parseInt(card.dataset.index, 10);

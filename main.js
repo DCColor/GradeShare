@@ -159,6 +159,15 @@ ipcMain.handle('resolve:refresh', async () => {
   }
 });
 
+ipcMain.handle('resolve:refreshAlbums', async () => {
+  try {
+    const result = await sendToPython('refresh_albums');
+    return { ok: true, data: result };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('resolve:createAlbum', async (event, { name }) => {
   console.log('ipcMain createAlbum received: ' + JSON.stringify({ name }));
   try {

@@ -34,6 +34,8 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 from gradeshare_drx_parser import parse_drx, parse_drx_folder, StillMetadata
 
+IMAGE_EXTS = ('.jpg', '.jpeg', '.tif', '.tiff', '.dpx', '.png', '.exr')
+
 # ── State ─────────────────────────────────────────────────────────────────
 
 resolve      = None
@@ -91,6 +93,7 @@ def still_metadata_to_dict(meta: StillMetadata) -> dict:
     return {
         'drxPath':        meta.drx_path,
         'imagePath':      meta.image_path,
+        'galleryPath':    meta.gallery_path,
         'stillId':        meta.still_id,
         'recordTc':       meta.record_tc,
         'sourceTc':       meta.source_tc,
@@ -111,10 +114,70 @@ def still_metadata_to_dict(meta: StillMetadata) -> dict:
         'techLine':       meta.tech_line(),
     }
 
+
+def find_gallery_stills(album, gallery_path):
+    """
+    Search gallery_path recursively for DRX+image pairs.
+    Each DRX file is expected to have a paired image (same stem, image extension).
+    Returns a list of (drx_path, image_path) strings.
+    """
+    stills = album.GetStills()
+    if not stills:
+        log('[gallery] Album has no stills')
+        return []
+
+    gallery = Path(gallery_path)
+    if not gallery.exists():
+        log(f'[gallery] Path not accessible: {gallery_path}')
+        return []
+
+    results = []
+    for drx_file in sorted(gallery.rglob('*.drx')):
+        for ext in IMAGE_EXTS:
+            img = drx_file.with_suffix(ext)
+            if img.exists() and img.stat().st_size > 0:
+                results.append((str(drx_file), str(img)))
+                break
+
+    log(f'[gallery] Found {len(results)} DRX+image pair(s) in {gallery_path}')
+    return results
+
+
+def _probe_gallery_path(album, stills):
+    """
+    Export the first still to a temp dir to read its DRX and extract GalleryPath.
+    Returns the gallery path string, or None if it could not be determined.
+    """
+    if not stills:
+        return None
+
+    probe_dir = tempfile.mkdtemp(prefix='gradeshare_probe_')
+    try:
+        album.ExportStills(stills[:1], probe_dir, 'gs_probe', 'jpg')
+        drx_files = list(Path(probe_dir).glob('*.drx'))
+        if drx_files:
+            meta = parse_drx(str(drx_files[0]))
+            if meta and meta.gallery_path:
+                log(f'[gallery_path] Probed: {meta.gallery_path}')
+                return meta.gallery_path
+    except Exception as e:
+        log(f'[gallery_path] Probe failed: {e}')
+
+    return None
+
 # ── Command handlers ──────────────────────────────────────────────────────
 
 def cmd_connect(payload):
     global resolve, pm, project, gallery, still_albums, powergrade_albums
+
+    # Reset all state before attempting a fresh connection so stale
+    # references from a previous project never bleed in.
+    resolve           = None
+    pm                = None
+    project           = None
+    gallery           = None
+    still_albums      = []
+    powergrade_albums = []
 
     try:
         import DaVinciResolveScript as dvr
@@ -169,10 +232,9 @@ def cmd_get_project(payload):
 
 
 def cmd_get_albums(payload):
+    global still_albums, powergrade_albums
     ensure_resolve()
 
-    # Refresh album lists
-    global still_albums, powergrade_albums
     still_albums      = gallery.GetGalleryStillAlbums() or []
     powergrade_albums = gallery.GetGalleryPowerGradeAlbums() or []
 
@@ -202,16 +264,18 @@ def cmd_get_albums(payload):
 
 def cmd_get_stills(payload):
     """
-    Export stills from an album to a temp folder,
-    parse DRX metadata, return metadata list.
+    Load stills from an album. Tries Resolve's gallery folder first (images are
+    always present there regardless of whether original media is mounted), then
+    falls back to ExportStills if the gallery path is not accessible.
     """
+    global gallery, still_albums, powergrade_albums
     ensure_resolve()
 
     album_index = payload.get('albumIndex', 0)
     album_type  = payload.get('albumType', 'still')
 
-    # Always fetch a fresh album list so newly grabbed stills are visible
-    # without requiring a reconnect.
+    # Re-fetch the album list fresh every call so newly grabbed stills are
+    # visible and the album object reference is never stale.
     if album_type == 'still':
         albums = gallery.GetGalleryStillAlbums() or []
     else:
@@ -223,21 +287,66 @@ def cmd_get_stills(payload):
     album  = albums[album_index]
     stills = album.GetStills()
 
-    # Export to temp folder as JPG for preview.
-    # ExportStills return value is unreliable — ignore it entirely and
-    # check what actually landed on disk instead.
+    # ── Gallery path approach ─────────────────────────────────────────────
+    # Export the first still to a small probe dir to extract the GalleryPath
+    # embedded in its DRX file.  DRX files (pure metadata) are exported even
+    # when original media is unavailable, so this probe is reliable.
+    gallery_path = _probe_gallery_path(album, stills)
+
+    if gallery_path and Path(gallery_path).exists():
+        log(f'[get_stills] Gallery path accessible: {gallery_path}')
+        pairs = find_gallery_stills(album, gallery_path)
+
+        if pairs:
+            parsed = []
+            for drx_path, img_path in pairs:
+                meta = parse_drx(drx_path)
+                if meta:
+                    meta.image_path = img_path
+                    parsed.append(meta)
+
+            total  = len(pairs)
+            loaded = len(parsed)
+            log(f'[get_stills] Gallery: {loaded}/{total} stills loaded')
+
+            if loaded == total:
+                health  = 'green'
+                message = ''
+            elif loaded > 0:
+                health  = 'yellow'
+                message = f'{loaded} of {total} stills loaded from gallery'
+            else:
+                health  = 'red'
+                message = 'Gallery images found but could not be parsed'
+
+            log(f'[get_stills] Health: {health}')
+            return {
+                'stills':       [still_metadata_to_dict(m) for m in parsed],
+                'exportPath':   gallery_path,
+                'health':       health,
+                'totalCount':   total,
+                'loadedCount':  loaded,
+                'missingCount': total - loaded,
+                'count':        loaded,
+                'message':      message,
+            }
+
+        log('[get_stills] Gallery path accessible but no DRX+image pairs found, falling back')
+    else:
+        log(f'[get_stills] Gallery path not accessible ({gallery_path!r}), falling back to ExportStills')
+
+    # ── ExportStills fallback ─────────────────────────────────────────────
     tmp_dir = tempfile.mkdtemp(prefix='gradeshare_preview_')
     prefix  = 'gs_preview'
 
-    log(f'[get_stills] Exporting stills → {tmp_dir}')
-    if stills:
-        album.ExportStills(stills, tmp_dir, prefix, 'jpg')
+    log(f'[get_stills] ExportStills → {tmp_dir}')
+    album.ExportStills(stills or [], tmp_dir, prefix, 'jpg')
 
-    # Count what actually landed on disk — this is the authoritative export count.
+    # Disk is authoritative — count jpg files that actually landed.
     try:
-        dir_entries  = os.listdir(tmp_dir)
-        jpg_count    = sum(1 for f in dir_entries if f.lower().endswith('.jpg'))
-        drx_count    = sum(1 for f in dir_entries if f.lower().endswith('.drx'))
+        dir_entries = os.listdir(tmp_dir)
+        jpg_count   = sum(1 for f in dir_entries if f.lower().endswith('.jpg'))
+        drx_count   = sum(1 for f in dir_entries if f.lower().endswith('.drx'))
     except Exception as e:
         log(f'[get_stills] Could not list tmp_dir: {e}')
         jpg_count = drx_count = 0
@@ -274,7 +383,8 @@ def cmd_get_stills(payload):
         except Exception as e:
             log(f'[get_stills] Error checking image {img}: {e}')
 
-    total  = jpg_count  # authoritative: what was actually exported
+    # Health is purely disk-based — jpg_count is totalCount, never GetStills() count.
+    total  = jpg_count
     loaded = len(valid)
     log(f'[get_stills] {loaded} of {total} stills loaded successfully')
 
@@ -305,6 +415,45 @@ def cmd_get_stills(payload):
 def cmd_refresh(payload):
     """Re-fetch albums fresh and return the same structure as get_albums."""
     return cmd_get_albums(payload)
+
+
+def cmd_refresh_albums(payload):
+    """
+    Force completely fresh object references from Resolve.
+    Re-fetches gallery from project, then re-fetches both album lists.
+    Returns the same structure as get_albums.
+    """
+    global gallery, still_albums, powergrade_albums
+    ensure_resolve()
+
+    gallery           = project.GetGallery()
+    still_albums      = gallery.GetGalleryStillAlbums()      or []
+    powergrade_albums = gallery.GetGalleryPowerGradeAlbums() or []
+
+    log(f'[refresh_albums] still={len(still_albums)}, powergrade={len(powergrade_albums)}')
+
+    return {
+        'stillAlbums': [
+            {
+                'index':      i,
+                'name':       album_name(a),
+                'stillCount': album_still_count(a),
+                'type':       'still',
+                'health':     'unknown',
+            }
+            for i, a in enumerate(still_albums)
+        ],
+        'powerGradeAlbums': [
+            {
+                'index':      i,
+                'name':       album_name(a),
+                'stillCount': album_still_count(a),
+                'type':       'powergrade',
+                'health':     'unknown',
+            }
+            for i, a in enumerate(powergrade_albums)
+        ],
+    }
 
 
 def cmd_create_album(payload):
@@ -371,13 +520,14 @@ def cmd_export_stills(payload):
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 COMMANDS = {
-    'connect':       cmd_connect,
-    'get_project':   cmd_get_project,
-    'get_albums':    cmd_get_albums,
-    'refresh':       cmd_refresh,
-    'get_stills':    cmd_get_stills,
-    'create_album':  cmd_create_album,
-    'export_stills': cmd_export_stills,
+    'connect':         cmd_connect,
+    'get_project':     cmd_get_project,
+    'get_albums':      cmd_get_albums,
+    'refresh':         cmd_refresh,
+    'refresh_albums':  cmd_refresh_albums,
+    'get_stills':      cmd_get_stills,
+    'create_album':    cmd_create_album,
+    'export_stills':   cmd_export_stills,
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────

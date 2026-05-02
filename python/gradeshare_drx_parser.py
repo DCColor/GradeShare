@@ -59,6 +59,9 @@ class StillMetadata:
     hdr_candidate: bool = False   # True if 10/12-bit and wide gamut descriptor
     color_space_hint: str = ""    # best guess from bit depth + descriptor
 
+    # Gallery storage
+    gallery_path: str = ""         # <GalleryPath> from DRX — root of Resolve gallery folder
+
     # Raw grade body (for future color science use)
     grade_body: str = ""
 

@@ -206,8 +206,6 @@ input {
 .sidebar-list {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  max-height: 200px;
 }
 
 /* Album list items — populated by app.js */
