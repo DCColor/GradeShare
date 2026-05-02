@@ -17,8 +17,9 @@ body {
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-base);
   color: var(--color-text-primary);
-  background: var(--color-bg-base);
+  background: rgb(20, 20, 22);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   user-select: none;
 }
 
@@ -44,8 +45,8 @@ input {
 /* ── Scrollbars ───────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -53,12 +54,12 @@ input {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border-mid);
-  border-radius: var(--radius-full);
+  background: rgb(60, 60, 66);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-strong);
+  background: rgb(90, 90, 98);
 }
 
 /* ── App shell ────────────────────────────────────────────────────────────── */
@@ -68,6 +69,7 @@ input {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: rgb(20, 20, 22);
 }
 
 /* ── Titlebar ─────────────────────────────────────────────────────────────── */
@@ -97,6 +99,7 @@ input {
 
 #workspace {
   display: flex;
+  flex-direction: row;
   flex: 1;
   overflow: hidden;
 }
@@ -106,12 +109,13 @@ input {
 #sidebar {
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
+  flex-shrink: 0;
   height: 100%;
   background: var(--color-bg-deep);
   border-right: var(--border) var(--color-border-subtle);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .sidebar-section {
@@ -132,6 +136,8 @@ input {
   letter-spacing: var(--tracking-widest);
   color: var(--color-text-dim);
   text-transform: uppercase;
+  margin-top: 4px;
+  margin-bottom: 8px;
 }
 
 .btn-sidebar-refresh {
@@ -168,6 +174,10 @@ input {
   flex-shrink: 0;
 }
 
+#section-powergrade-albums {
+  margin-top: 20px;
+}
+
 .sidebar-list {
   display: flex;
   flex-direction: column;
@@ -180,8 +190,8 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 30px;
-  padding: 0 var(--space-xl);
+  padding: 8px 14px;
+  margin-bottom: 2px;
   font-size: var(--font-size-base);
   color: var(--color-text-mid);
   cursor: pointer;
@@ -235,7 +245,8 @@ input {
   font-size: var(--font-size-xs);
   color: var(--color-text-dim);
   border-top: var(--border) var(--color-border-subtle);
-  margin-top: var(--space-xs);
+  margin-top: 8px;
+  margin-bottom: 4px;
   transition: color 0.1s, background 0.1s;
   text-align: left;
 }
@@ -295,20 +306,20 @@ input {
 
 #screens {
   flex: 1;
-  position: relative;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .screen {
   display: none;
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
 }
 
 .screen.active {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
 }
 
 /* ── Connect screen ───────────────────────────────────────────────────────── */
@@ -348,18 +359,18 @@ input {
   gap: var(--space-md);
   width: 100%;
   padding: var(--space-lg) var(--space-xl);
-  background: var(--color-bg-deep);
-  border: var(--border) var(--color-border-subtle);
+  background: rgb(28, 28, 30);
+  border: 1px solid rgb(50, 50, 55);
   border-radius: var(--radius-lg);
   font-size: var(--font-size-base);
-  color: var(--color-text-mid);
+  color: rgb(210, 210, 215);
 }
 
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: var(--radius-full);
-  background: var(--color-text-faint);
+  background: rgb(200, 200, 205);
   flex-shrink: 0;
   transition: background 0.1s;
 }
@@ -443,6 +454,58 @@ input {
 
 .btn-ghost:active {
   opacity: 0.8;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+  background: rgb(44, 44, 48);
+  color: rgb(220, 220, 225);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  border-radius: var(--radius-md);
+  border: var(--border) transparent;
+  transition: background 0.1s, opacity 0.1s;
+  white-space: nowrap;
+}
+
+.btn-secondary:hover {
+  background: rgb(54, 54, 58);
+}
+
+.btn-secondary:active {
+  opacity: 0.8;
+}
+
+.btn-disconnect {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+  background: rgb(44, 44, 48);
+  color: rgb(200, 200, 205);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  border-radius: var(--radius-md);
+  border: var(--border) transparent;
+  transition: background 0.1s, opacity 0.1s;
+  white-space: nowrap;
+}
+
+.btn-disconnect:hover {
+  background: rgb(56, 56, 60);
+}
+
+.btn-disconnect:active {
+  opacity: 0.8;
+}
+
+.btn-primary.btn-connected,
+.btn-primary.btn-connected:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .btn-subtle {
@@ -694,7 +757,6 @@ input {
 #screen-gallery {
   padding: var(--space-xl) var(--space-xl) 0;
   gap: var(--space-md);
-  overflow: hidden;
 }
 
 .gallery-toolbar {
@@ -758,11 +820,9 @@ input {
 }
 
 .still-grid {
-  flex: 1;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  overflow-y: auto;
   align-content: start;
   padding-bottom: var(--space-xl);
 }

@@ -198,20 +198,63 @@ async function handleConnect() {
     const projectStr = state.project.name    ? ` — ${state.project.name}`  : '';
     setStatusBox('connected', `${state.resolve.productName}${versionStr}${projectStr}`);
 
-    btn.hidden = true;
-    $('btn-browse-gallery').hidden = false;
+    btn.textContent = 'Connected';
+    btn.classList.add('btn-connected');
+    $('btn-disconnect').hidden = false;
 
     await loadAlbums();
+
+    if (state.project.stillAlbums.length > 0) {
+      state.gallery.selectedAlbumIndex = 0;
+      state.gallery.selectedAlbumType  = 'still';
+      const firstItem = document.querySelector('.album-item[data-album-type="still"][data-album-index="0"]');
+      if (firstItem) {
+        document.querySelectorAll('.album-item').forEach(el => el.classList.remove('active'));
+        firstItem.classList.add('active');
+      }
+      await loadStills(0, 'still');
+    } else {
+      switchScreen('gallery');
+    }
   } catch (err) {
     setStatusBox('error', err.message);
     btn.disabled = false;
     btn.textContent = 'Connect to Resolve';
+    btn.classList.remove('btn-connected');
   }
+}
+
+function handleDisconnect() {
+  state.resolve.connected   = false;
+  state.resolve.version     = null;
+  state.resolve.productName = null;
+  state.project.name        = null;
+  state.project.stillAlbums      = [];
+  state.project.powerGradeAlbums = [];
+  state.gallery.selectedAlbumIndex = null;
+  state.gallery.selectedAlbumType  = null;
+  state.gallery.stills             = [];
+  state.gallery.selectedStillIds   = [];
+
+  renderSidebarList('still',      []);
+  renderSidebarList('powergrade', []);
+
+  $('still-grid').innerHTML = '';
+  updateGalleryCount();
+
+  const btn = $('btn-connect');
+  btn.disabled = false;
+  btn.textContent = 'Connect to Resolve';
+  btn.classList.remove('btn-connected');
+  $('btn-disconnect').hidden = true;
+
+  setStatusBox('', 'Not connected to DaVinci Resolve');
+  switchScreen('connect');
 }
 
 function setupConnectScreen() {
   $('btn-connect').addEventListener('click', handleConnect);
-  $('btn-browse-gallery').addEventListener('click', () => switchScreen('gallery'));
+  $('btn-disconnect').addEventListener('click', handleDisconnect);
 }
 
 // ── Albums ─────────────────────────────────────────────────────────────────
@@ -855,10 +898,10 @@ function setupPythonStatusListener() {
       setStatusBox('error', 'Lost connection to DaVinci Resolve');
 
       const btn = $('btn-connect');
-      btn.hidden    = false;
       btn.disabled  = false;
       btn.textContent = 'Reconnect';
-      $('btn-browse-gallery').hidden = true;
+      btn.classList.remove('btn-connected');
+      $('btn-disconnect').hidden = true;
     }
   });
 }
