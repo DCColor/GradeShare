@@ -115,7 +115,32 @@ input {
   border-right: var(--border) var(--color-border-subtle);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+#sidebar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, rgb(14, 14, 16));
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+
+#sidebar.at-bottom::after {
+  opacity: 0;
+}
+
+.sidebar-scroll {
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-section {
@@ -834,16 +859,16 @@ input {
   aspect-ratio: 16 / 9;
   overflow: hidden;
   cursor: pointer;
-  border: 2px solid transparent;
+  border: 1px solid rgb(50, 50, 55);
   transition: border-color 0.1s;
 }
 
 .still-card:hover {
-  border-color: var(--color-border-strong);
+  border-color: rgb(90, 90, 98);
 }
 
 .still-card.selected {
-  border-color: var(--color-primary);
+  border-color: rgb(230, 5, 1);
 }
 
 .still-card-image {

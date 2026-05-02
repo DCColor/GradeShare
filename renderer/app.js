@@ -315,6 +315,9 @@ function renderSidebarList(type, albums) {
 
     list.appendChild(li);
   });
+
+  const scrollEl = document.querySelector('.sidebar-scroll');
+  if (scrollEl) scrollEl.dispatchEvent(new Event('scroll'));
 }
 
 // ── Album health ───────────────────────────────────────────────────────────
@@ -874,7 +877,17 @@ function setupSidebar() {
   });
   setupNewAlbumModal();
 
-  document.getElementById('sidebar').addEventListener('click', (e) => {
+  const sidebarEl     = document.getElementById('sidebar');
+  const sidebarScroll = sidebarEl.querySelector('.sidebar-scroll');
+
+  function updateSidebarFade() {
+    const atBottom = sidebarScroll.scrollHeight - sidebarScroll.scrollTop <= sidebarScroll.clientHeight + 2;
+    sidebarEl.classList.toggle('at-bottom', atBottom);
+  }
+  sidebarScroll.addEventListener('scroll', updateSidebarFade);
+  updateSidebarFade();
+
+  sidebarEl.addEventListener('click', (e) => {
     const item = e.target.closest('.album-item');
     if (!item) return;
     document.querySelectorAll('.album-item').forEach(el => el.classList.remove('active'));
