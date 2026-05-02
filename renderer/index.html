@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>GradeShare</title>
+
+  <!-- ── CSS custom properties mirroring config/theme.js ────────────────────
+       nodeIntegration is off so require() is unavailable in the renderer.
+       These values are kept in sync with theme.js manually.
+  ──────────────────────────────────────────────────────────────────────── -->
+  <style>
+    :root {
+      /* Colors ── brand */
+      --color-primary:        rgb(230, 5, 1);
+      --color-primary-hover:  rgb(255, 30, 26);
+      --color-primary-dim:    rgb(120, 3, 1);
+      --color-primary-bg:     rgb(26, 5, 0);
+
+      /* Colors ── amber / HDR */
+      --color-amber:          rgb(245, 158, 11);
+      --color-amber-dim:      rgb(122, 74, 0);
+      --color-amber-bg:       rgb(26, 16, 0);
+
+      /* Colors ── success */
+      --color-success:        rgb(74, 222, 128);
+      --color-success-bg:     rgb(15, 61, 31);
+      --color-success-border: rgb(22, 101, 52);
+
+      /* Colors ── backgrounds */
+      --color-bg-deep:        rgb(16, 14, 12);
+      --color-bg-base:        rgb(24, 22, 20);
+      --color-bg-mid:         rgb(30, 26, 22);
+      --color-bg-raised:      rgb(38, 34, 28);
+
+      /* Colors ── borders */
+      --color-border-subtle:  rgb(42, 37, 32);
+      --color-border-mid:     rgb(58, 48, 40);
+      --color-border-strong:  rgb(80, 68, 56);
+
+      /* Colors ── text */
+      --color-text-primary:   rgb(232, 224, 216);
+      --color-text-mid:       rgb(180, 172, 164);
+      --color-text-dim:       rgb(120, 112, 104);
+      --color-text-faint:     rgb(100, 95, 90);
+
+      /* Typography ── families */
+      --font-family:      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      --font-family-mono: "SF Mono", "Fira Code", "Fira Mono", monospace;
+
+      /* Typography ── sizes */
+      --font-size-xxs:  10px;
+      --font-size-xs:   11px;
+      --font-size-sm:   12px;
+      --font-size-base: 13px;
+      --font-size-md:   13px;
+      --font-size-lg:   14px;
+      --font-size-xl:   16px;
+      --font-size-xxl:  20px;
+      --font-size-logo: 30px;
+
+      /* Typography ── weights */
+      --font-weight-normal:   400;
+      --font-weight-medium:   500;
+      --font-weight-semibold: 600;
+
+      /* Typography ── line-heights */
+      --line-height-tight: 1.3;
+      --line-height-base:  1.5;
+      --line-height-loose: 1.7;
+
+      /* Typography ── tracking */
+      --tracking-tight:  -0.02em;
+      --tracking-normal:  0;
+      --tracking-wide:    0.02em;
+      --tracking-wider:   0.06em;
+      --tracking-widest:  0.08em;
+
+      /* Spacing */
+      --space-xxs:  2px;
+      --space-xs:   4px;
+      --space-sm:   6px;
+      --space-md:   8px;
+      --space-lg:   12px;
+      --space-xl:   16px;
+      --space-xxl:  20px;
+      --space-xxxl: 24px;
+
+      /* Layout */
+      --sidebar-width:    192px;
+      --titlebar-height:  38px;
+      --nav-height:       36px;
+
+      --radius-sm:   4px;
+      --radius-md:   6px;
+      --radius-lg:   8px;
+      --radius-xl:   12px;
+      --radius-full: 9999px;
+
+      --border: 0.5px solid;
+    }
+  </style>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div id="app">
+
+    <!-- ── Titlebar ──────────────────────────────────────────────────────── -->
+    <div id="titlebar">
+      <span class="titlebar-title">
+        <span class="logo-grade">Grade</span><span class="logo-share">Share</span>
+      </span>
+    </div>
+
+    <!-- ── Workspace (sidebar + main) ────────────────────────────────────── -->
+    <div id="workspace">
+
+    <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+    <aside id="sidebar">
+
+      <section class="sidebar-section" id="section-still-albums">
+        <div class="sidebar-section-header">
+          <span class="sidebar-section-label">STILL ALBUMS</span>
+          <button id="btn-refresh" class="btn-sidebar-refresh" title="Refresh albums">↻</button>
+        </div>
+        <ul id="still-albums-list" class="sidebar-list"></ul>
+        <button id="btn-new-album" class="btn-new-album">+ New album in Resolve</button>
+      </section>
+
+      <div class="sidebar-divider"></div>
+
+      <section class="sidebar-section" id="section-powergrade-albums">
+        <div class="sidebar-section-header">
+          <span class="sidebar-section-label">POWERGRADES</span>
+          <button id="btn-refresh-powergrade" class="btn-sidebar-refresh" title="Refresh PowerGrades">↻</button>
+        </div>
+        <ul id="powergrade-albums-list" class="sidebar-list"></ul>
+      </section>
+
+    </aside>
+
+    <!-- ── Main ──────────────────────────────────────────────────────────── -->
+    <main id="main">
+
+      <!-- Top nav tabs -->
+      <nav id="top-nav">
+        <button class="nav-tab active" data-screen="connect">Connect</button>
+        <button class="nav-tab" data-screen="gallery">Gallery</button>
+        <button class="nav-tab" data-screen="layout">Layout</button>
+        <button class="nav-tab" data-screen="contactsheet">Contact Sheet</button>
+        <button class="nav-tab" data-screen="export">Export</button>
+      </nav>
+
+      <!-- ── Screens ─────────────────────────────────────────────────────── -->
+      <div id="screens">
+
+        <!-- Connect ──────────────────────────────────────────────────────── -->
+        <div id="screen-connect" class="screen active">
+          <div class="connect-center">
+
+            <div class="connect-logo">
+              <span class="logo-grade">Grade</span><span class="logo-share">Share</span>
+            </div>
+
+            <div id="connection-status" class="status-box">
+              <span class="status-dot" id="status-dot"></span>
+              <span id="status-text">Not connected to DaVinci Resolve</span>
+            </div>
+
+            <div class="connect-actions">
+              <button id="btn-connect" class="btn-primary">Connect to Resolve</button>
+              <button id="btn-browse-gallery" class="btn-ghost" hidden>Browse gallery</button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Gallery ──────────────────────────────────────────────────────── -->
+        <div id="screen-gallery" class="screen">
+
+          <div class="gallery-toolbar">
+            <span id="gallery-count" class="gallery-count">0 stills</span>
+            <div class="gallery-toolbar-actions">
+              <button id="btn-select-all" class="btn-subtle">Select all</button>
+              <button id="btn-clear-selection" class="btn-subtle">Clear</button>
+            </div>
+          </div>
+
+          <div id="gallery-health-notice" class="gallery-health-notice" hidden>
+            <span class="health-notice-text"></span>
+            <button class="health-notice-dismiss" id="btn-dismiss-health-notice" title="Dismiss">×</button>
+          </div>
+
+          <div id="still-grid" class="still-grid"></div>
+
+        </div>
+
+        <!-- Layout ───────────────────────────────────────────────────────── -->
+        <div id="screen-layout" class="screen">
+          <div class="split-layout">
+
+            <div class="split-preview">
+              <canvas id="layout-canvas" class="preview-canvas"></canvas>
+            </div>
+
+            <div class="split-controls">
+
+              <div class="controls-section">
+                <span class="control-label">Platform</span>
+                <div id="platform-picker" class="picker-row"></div>
+              </div>
+
+              <div class="controls-section">
+                <span class="control-label">Grid</span>
+                <div id="grid-picker" class="picker-row"></div>
+              </div>
+
+              <div class="controls-section">
+                <label class="control-label" for="caption-project">Project</label>
+                <input id="caption-project" type="text" class="control-input" placeholder="Project name">
+              </div>
+
+              <div class="controls-section">
+                <label class="control-label" for="caption-studio">Studio</label>
+                <input id="caption-studio" type="text" class="control-input" placeholder="Studio name">
+              </div>
+
+              <div class="controls-section toggle-row">
+                <span class="control-label">Show filename</span>
+                <button id="toggle-filename" class="toggle"
+                        role="switch" aria-checked="false" data-state="off"></button>
+              </div>
+
+              <div class="controls-section toggle-row">
+                <span class="control-label">Show watermark</span>
+                <button id="toggle-watermark" class="toggle"
+                        role="switch" aria-checked="true" data-state="on"></button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Contact Sheet ────────────────────────────────────────────────── -->
+        <div id="screen-contactsheet" class="screen">
+          <div class="split-layout">
+
+            <div class="split-preview">
+              <div id="contact-sheet-preview" class="preview-canvas"></div>
+            </div>
+
+            <div class="split-controls">
+
+              <div class="controls-section">
+                <span class="control-label">Grid layout</span>
+                <div id="contact-grid-picker" class="picker-row"></div>
+              </div>
+
+              <div class="controls-section">
+                <label class="control-label" for="cs-studio-name">Studio</label>
+                <input id="cs-studio-name" type="text" class="control-input" placeholder="Studio name">
+              </div>
+
+              <div class="controls-section">
+                <label class="control-label" for="cs-confidentiality">Confidentiality</label>
+                <input id="cs-confidentiality" type="text" class="control-input" placeholder="e.g. Confidential">
+              </div>
+
+              <div class="controls-section">
+                <span class="control-label">Metadata fields</span>
+                <div id="cs-fields" class="fields-list"></div>
+              </div>
+
+              <div class="controls-section toggle-row">
+                <span class="control-label">Show logo</span>
+                <button id="toggle-cs-logo" class="toggle"
+                        role="switch" aria-checked="true" data-state="on"></button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Export ───────────────────────────────────────────────────────── -->
+        <div id="screen-export" class="screen">
+          <div class="export-layout">
+
+            <div id="export-thumbnail-row" class="thumbnail-row"></div>
+
+            <div class="export-cards">
+
+              <div class="card" id="card-image-settings">
+                <div class="card-title">Image settings</div>
+                <div class="card-row">
+                  <span class="card-label">Format</span>
+                  <div id="export-format-picker" class="picker-row"></div>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Quality</span>
+                  <div id="export-quality-picker" class="picker-row"></div>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Resolution</span>
+                  <div id="export-resolution-picker" class="picker-row"></div>
+                </div>
+              </div>
+
+              <div class="card" id="card-destination">
+                <div class="card-title">Destination</div>
+                <div class="card-row">
+                  <span class="card-label">Save to</span>
+                  <div id="export-dest-picker" class="picker-row"></div>
+                </div>
+                <div class="card-row" id="output-path-row">
+                  <span class="card-label">Folder</span>
+                  <div class="path-input-row">
+                    <span id="export-output-path" class="path-display">Not set</span>
+                    <button id="btn-browse-folder" class="btn-subtle">Browse</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card" id="card-color-science">
+                <div class="card-title">Color science</div>
+                <div class="card-row">
+                  <span class="card-label">Source</span>
+                  <div id="export-source-picker" class="picker-row"></div>
+                </div>
+                <div class="card-row">
+                  <span class="card-label">Output transform</span>
+                  <div id="export-output-picker" class="picker-row"></div>
+                </div>
+              </div>
+
+            </div><!-- /.export-cards -->
+
+            <div class="export-footer">
+              <button id="btn-export" class="btn-primary btn-export">Export</button>
+            </div>
+
+          </div><!-- /.export-layout -->
+        </div>
+
+      </div><!-- /#screens -->
+    </main>
+
+    </div><!-- /#workspace -->
+
+    <!-- ── New album modal ───────────────────────────────────────────────── -->
+    <div id="modal-new-album" class="modal-overlay" hidden>
+      <div class="modal-card">
+        <div class="modal-title">New Still Album</div>
+        <input id="input-album-name" type="text" class="control-input modal-input"
+               placeholder="Album name..." autocomplete="off" spellcheck="false">
+        <div class="modal-actions">
+          <button id="btn-modal-cancel" class="btn-subtle">Cancel</button>
+          <button id="btn-modal-create" class="btn-primary">Create in Resolve</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /#app -->
+
+  <script src="app.js"></script>
+</body>
+</html>
