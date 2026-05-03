@@ -112,6 +112,9 @@ const state = {
     cellOffsets:    [],
     cellScales:     [],
     cellLocked:     [],
+    cellBackgrounds:       [],
+    globalBackground:      true,
+    globalBackgroundColor: '#000000',
   },
   contactSheet: {
     gridId:          '3x2',
@@ -607,7 +610,8 @@ function setupToggle(id, onChange) {
 
 // ── Layout screen ──────────────────────────────────────────────────────────
 
-let _dragState    = null;  // active pan drag
+let _dragState       = null;  // active pan drag
+let _activeCellIndex = 0;    // last interacted cell (for per-cell background)
 let _zoomTimers   = {};    // per-cell timeout ids for zoom badge fade
 let _autoSaveTimer   = null;
 let _saveStatusTimer = null;
@@ -617,10 +621,12 @@ let _restoringSession   = false;
 
 function resetLayoutCellState(cellCount) {
   const sel = state.gallery.selectedStills;
-  state.layout.cellStills  = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
-  state.layout.cellOffsets = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
-  state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
-  state.layout.cellLocked  = Array.from({ length: cellCount }, () => false);
+  const bg  = state.layout.globalBackgroundColor || '#000000';
+  state.layout.cellStills      = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
+  state.layout.cellOffsets     = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
+  state.layout.cellScales      = Array.from({ length: cellCount }, () => 1.0);
+  state.layout.cellLocked      = Array.from({ length: cellCount }, () => false);
+  state.layout.cellBackgrounds = Array.from({ length: cellCount }, () => bg);
 }
 
 function updateSocialFromGallery() {
@@ -631,20 +637,22 @@ function updateSocialFromGallery() {
   const cellCount  = grid ? grid.cols * grid.rows : Math.max(state.layout.cellStills.length, 1);
   const prevLocked = state.layout.cellLocked;
 
-  state.layout.cellStills  = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
-  state.layout.cellOffsets = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
-  state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
-  state.layout.cellLocked  = Array.from({ length: cellCount }, (_, i) => prevLocked[i] ?? false);
+  state.layout.cellStills      = Array.from({ length: cellCount }, (_, i) => sel[i] ?? null);
+  state.layout.cellOffsets     = Array.from({ length: cellCount }, () => ({ x: 0, y: 0 }));
+  state.layout.cellScales      = Array.from({ length: cellCount }, () => 1.0);
+  state.layout.cellLocked      = Array.from({ length: cellCount }, (_, i) => prevLocked[i] ?? false);
+  state.layout.cellBackgrounds = Array.from({ length: cellCount }, (_, i) => state.layout.cellBackgrounds[i] ?? state.layout.globalBackgroundColor ?? '#000000');
 
   // Propagate same stills to all inactive tabs (pan/zoom/lock stays per-tab)
   state.layoutTabs.forEach((tab, i) => {
     if (i === state.activeTabIndex) return;
     const tabGrid  = GRIDS.find(g => g.id === tab.gridId);
     const tabCells = tabGrid ? tabGrid.cols * tabGrid.rows : Math.max(tab.cellStills.length, 1);
-    tab.cellStills  = Array.from({ length: tabCells }, (_, j) => sel[j] ?? null);
-    tab.cellOffsets = Array.from({ length: tabCells }, () => ({ x: 0, y: 0 }));
-    tab.cellScales  = Array.from({ length: tabCells }, () => 1.0);
-    tab.cellLocked  = Array.from({ length: tabCells }, (_, j) => tab.cellLocked[j] ?? false);
+    tab.cellStills      = Array.from({ length: tabCells }, (_, j) => sel[j] ?? null);
+    tab.cellOffsets     = Array.from({ length: tabCells }, () => ({ x: 0, y: 0 }));
+    tab.cellScales      = Array.from({ length: tabCells }, () => 1.0);
+    tab.cellLocked      = Array.from({ length: tabCells }, (_, j) => tab.cellLocked[j] ?? false);
+    tab.cellBackgrounds = Array.from({ length: tabCells }, (_, j) => tab.cellBackgrounds[j] ?? tab.globalBackgroundColor ?? '#000000');
   });
 
   if (state.ui.activeScreen === 'social') {
@@ -683,6 +691,9 @@ function makeNewTab(platformId = 'ig-portrait', gridId = '1x1') {
     cellOffsets: [],
     cellScales:  [],
     cellLocked:  [],
+    cellBackgrounds:       [],
+    globalBackground:      true,
+    globalBackgroundColor: '#000000',
   };
 }
 
@@ -702,11 +713,14 @@ function saveCurrentTabState() {
   tab.watermarkMode     = state.layout.watermarkMode;
   tab.watermarkSize     = state.layout.watermarkSize;
   tab.watermarkOpacity  = state.layout.watermarkOpacity;
-  tab.cellStills  = state.layout.cellStills.slice();
-  tab.cellOffsets = state.layout.cellOffsets.map(o => ({ ...o }));
-  tab.cellScales  = state.layout.cellScales.slice();
-  tab.cellLocked  = state.layout.cellLocked.slice();
-  tab.label       = tabLabel(state.layout.platformId, state.layout.gridId);
+  tab.cellStills       = state.layout.cellStills.slice();
+  tab.cellOffsets      = state.layout.cellOffsets.map(o => ({ ...o }));
+  tab.cellScales       = state.layout.cellScales.slice();
+  tab.cellLocked       = state.layout.cellLocked.slice();
+  tab.cellBackgrounds      = state.layout.cellBackgrounds.slice();
+  tab.globalBackground     = state.layout.globalBackground;
+  tab.globalBackgroundColor = state.layout.globalBackgroundColor;
+  tab.label            = tabLabel(state.layout.platformId, state.layout.gridId);
 }
 
 function loadTabState(idx) {
@@ -725,10 +739,13 @@ function loadTabState(idx) {
   state.layout.watermarkMode     = tab.watermarkMode;
   state.layout.watermarkSize     = tab.watermarkSize;
   state.layout.watermarkOpacity  = tab.watermarkOpacity;
-  state.layout.cellStills  = tab.cellStills.slice();
-  state.layout.cellOffsets = tab.cellOffsets.map(o => ({ ...o }));
-  state.layout.cellScales  = tab.cellScales.slice();
-  state.layout.cellLocked  = tab.cellLocked.slice();
+  state.layout.cellStills       = tab.cellStills.slice();
+  state.layout.cellOffsets      = tab.cellOffsets.map(o => ({ ...o }));
+  state.layout.cellScales       = tab.cellScales.slice();
+  state.layout.cellLocked       = tab.cellLocked.slice();
+  state.layout.cellBackgrounds       = (tab.cellBackgrounds ?? []).slice();
+  state.layout.globalBackground      = tab.globalBackground      ?? true;
+  state.layout.globalBackgroundColor = tab.globalBackgroundColor ?? '#000000';
 }
 
 function renderTabBar() {
@@ -819,6 +836,22 @@ function applyGalleryZoom() {
   }
 }
 
+function clampOffset(val, imgSize, cellSize) {
+  return imgSize >= cellSize
+    ? Math.max(cellSize - imgSize, Math.min(0, val))
+    : Math.max(0, Math.min(cellSize - imgSize, val));
+}
+
+function updateCellBgSwatch() {
+  const color = state.layout.globalBackground
+    ? (state.layout.globalBackgroundColor || '#000000')
+    : (state.layout.cellBackgrounds[_activeCellIndex] || '#000000');
+  const swatch = $('btn-cell-bg-swatch');
+  const input  = $('input-cell-bg-color');
+  if (swatch) swatch.style.backgroundColor = color;
+  if (input)  input.value = color;
+}
+
 function assignStillToCell(cellIndex) {
   const used = new Set(state.layout.cellStills.filter(Boolean));
   const next = state.gallery.selectedStills.find(s => !used.has(s));
@@ -831,6 +864,12 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
   const cell   = document.createElement('div');
   cell.className = 'layout-cell';
   cell.dataset.cellIndex = String(i);
+
+  // Apply cell background color
+  const cellBg = state.layout.globalBackground
+    ? (state.layout.globalBackgroundColor || '#000000')
+    : (state.layout.cellBackgrounds[i] || '#000000');
+  cell.style.backgroundColor = cellBg;
 
   const still  = state.layout.cellStills[i];
   const locked = state.layout.cellLocked[i];
@@ -863,13 +902,12 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
         const saved = state.layout.cellOffsets[i];
         let x, y;
         if (saved.x === 0 && saved.y === 0) {
+          // Center: -Math.round((imgW - cellW) / 2) works for both large and small images
           x = -Math.round((imgW - cellW) / 2);
           y = -Math.round((imgH - cellH) / 2);
         } else {
-          const minX = cellW - imgW;
-          const minY = cellH - imgH;
-          x = Math.max(minX, Math.min(0, saved.x));
-          y = Math.max(minY, Math.min(0, saved.y));
+          x = clampOffset(saved.x, imgW, cellW);
+          y = clampOffset(saved.y, imgH, cellH);
         }
         state.layout.cellOffsets[i] = { x, y };
         img.style.left = `${x}px`;
@@ -897,11 +935,9 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
         const imgH = Math.round(natH * cover * 1.4 * newScale);
         img.style.width  = `${imgW}px`;
         img.style.height = `${imgH}px`;
-        const minX = cellW - imgW;
-        const minY = cellH - imgH;
-        const cur  = state.layout.cellOffsets[i];
-        const x    = Math.max(minX, Math.min(0, cur.x));
-        const y    = Math.max(minY, Math.min(0, cur.y));
+        const cur = state.layout.cellOffsets[i];
+        const x   = clampOffset(cur.x, imgW, cellW);
+        const y   = clampOffset(cur.y, imgH, cellH);
         state.layout.cellOffsets[i] = { x, y };
         img.style.left = `${x}px`;
         img.style.top  = `${y}px`;
@@ -924,6 +960,8 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
         cell.addEventListener('mousedown', e => {
           if (e.button !== 0) return;
           e.preventDefault();
+          _activeCellIndex = i;
+          updateCellBgSwatch();
           _dragState = {
             img, cellEl: cell, cellIndex: i, cellW, cellH,
             startX: e.clientX, startY: e.clientY,
@@ -952,7 +990,11 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
     cell.appendChild(numLabel);
   } else {
     cell.classList.add('layout-cell-empty');
-    cell.addEventListener('click', () => assignStillToCell(i));
+    cell.addEventListener('click', () => {
+      _activeCellIndex = i;
+      updateCellBgSwatch();
+      assignStillToCell(i);
+    });
   }
 
   const lockBtn = document.createElement('button');
@@ -976,10 +1018,8 @@ function initDocumentDragHandlers() {
     const { img, cellW, cellH, cellIndex, startX, startY, startOX, startOY } = _dragState;
     const imgW = img.offsetWidth;
     const imgH = img.offsetHeight;
-    const minX = cellW - imgW;
-    const minY = cellH - imgH;
-    const newX = Math.max(minX, Math.min(0, startOX + e.clientX - startX));
-    const newY = Math.max(minY, Math.min(0, startOY + e.clientY - startY));
+    const newX = clampOffset(startOX + e.clientX - startX, imgW, cellW);
+    const newY = clampOffset(startOY + e.clientY - startY, imgH, cellH);
     state.layout.cellOffsets[cellIndex] = { x: newX, y: newY };
     img.style.left = `${newX}px`;
     img.style.top  = `${newY}px`;
@@ -1352,6 +1392,46 @@ function setupLayoutScreen() {
     triggerAutoSave();
   });
 
+  // ── Cell background controls ──────────────────────────────────────────────
+  const cellBgSwatch = $('btn-cell-bg-swatch');
+  const cellBgInput  = $('input-cell-bg-color');
+  const cellBgReset  = $('btn-cell-bg-reset');
+
+  function applyCellBgColor(color) {
+    if (state.layout.globalBackground) {
+      state.layout.globalBackgroundColor = color;
+      state.layout.cellBackgrounds = state.layout.cellBackgrounds.map(() => color);
+    } else {
+      state.layout.cellBackgrounds[_activeCellIndex] = color;
+    }
+    updateLayoutCanvas();
+    triggerAutoSave();
+  }
+
+  if (cellBgSwatch) {
+    cellBgSwatch.style.backgroundColor = state.layout.globalBackgroundColor || '#000000';
+    cellBgSwatch.addEventListener('click', () => cellBgInput?.click());
+  }
+  if (cellBgInput) {
+    cellBgInput.value = state.layout.globalBackgroundColor || '#000000';
+    cellBgInput.addEventListener('input', e => {
+      if (cellBgSwatch) cellBgSwatch.style.backgroundColor = e.target.value;
+      applyCellBgColor(e.target.value);
+    });
+  }
+  if (cellBgReset) {
+    cellBgReset.addEventListener('click', () => {
+      applyCellBgColor('#000000');
+      updateCellBgSwatch();
+    });
+  }
+  setupToggle('toggle-cell-bg-global', on => {
+    state.layout.globalBackground = on;
+    updateCellBgSwatch();
+    updateLayoutCanvas();
+    triggerAutoSave();
+  });
+
   renderPicker('caption-mode-picker', [
     { id: 'none',    label: 'None'    },
     { id: 'bar',     label: 'Bar'     },
@@ -1719,6 +1799,9 @@ function buildSessionJSON(sessionName) {
       watermarkMode:     state.layout.watermarkMode,
       watermarkSize:     state.layout.watermarkSize,
       watermarkOpacity:  state.layout.watermarkOpacity,
+      globalBackground:      state.layout.globalBackground,
+      globalBackgroundColor: state.layout.globalBackgroundColor,
+      cellBackgrounds:       state.layout.cellBackgrounds,
     },
     gallery: {
       selectedAlbumIndex: state.gallery.selectedAlbumIndex,
@@ -1757,10 +1840,13 @@ function buildSessionJSON(sessionName) {
       watermarkSize:     tab.watermarkSize,
       watermarkOpacity:  tab.watermarkOpacity,
       cells: {
-        offsets: tab.cellOffsets,
-        scales:  tab.cellScales,
-        locked:  tab.cellLocked,
+        offsets:     tab.cellOffsets,
+        scales:      tab.cellScales,
+        locked:      tab.cellLocked,
+        backgrounds: tab.cellBackgrounds,
       },
+      globalBackground:      tab.globalBackground,
+      globalBackgroundColor: tab.globalBackgroundColor,
     })),
     activeTabIndex: state.activeTabIndex,
   };
@@ -2091,10 +2177,13 @@ async function restoreSession(sessionData) {
   state.layout.captionStudio    = L.captionStudio    ?? '';
   state.layout.showFilename     = L.showFilename     ?? false;
   state.layout.showWatermark    = L.showWatermark    ?? true;
-  state.layout.watermarkCorner  = L.watermarkCorner  ?? 'br';
-  state.layout.watermarkMode    = L.watermarkMode    ?? 'canvas';
-  state.layout.watermarkSize    = L.watermarkSize    ?? 15;
-  state.layout.watermarkOpacity = L.watermarkOpacity ?? 1.0;
+  state.layout.watermarkCorner       = L.watermarkCorner       ?? 'br';
+  state.layout.watermarkMode         = L.watermarkMode         ?? 'canvas';
+  state.layout.watermarkSize         = L.watermarkSize         ?? 15;
+  state.layout.watermarkOpacity      = L.watermarkOpacity      ?? 1.0;
+  state.layout.globalBackground      = L.globalBackground      ?? true;
+  state.layout.globalBackgroundColor = L.globalBackgroundColor ?? '#000000';
+  state.layout.cellBackgrounds       = L.cellBackgrounds       ?? [];
 
   // 2. Restore watermark from library
   if (L.watermarkFilename) {
@@ -2288,11 +2377,13 @@ async function restoreSession(sessionData) {
         captionStudio:   tabData.captionStudio   ?? '',
         showFilename:    tabData.showFilename     ?? false,
         showWatermark:   tabData.showWatermark    ?? true,
-        watermarkFilename: tabData.watermarkFilename ?? null,
-        watermarkCorner:   tabData.watermarkCorner ?? 'br',
-        watermarkMode:     tabData.watermarkMode  ?? 'canvas',
-        watermarkSize:     tabData.watermarkSize  ?? 15,
-        watermarkOpacity:  tabData.watermarkOpacity ?? 1.0,
+        watermarkFilename:     tabData.watermarkFilename     ?? null,
+        watermarkCorner:       tabData.watermarkCorner       ?? 'br',
+        watermarkMode:         tabData.watermarkMode         ?? 'canvas',
+        watermarkSize:         tabData.watermarkSize         ?? 15,
+        watermarkOpacity:      tabData.watermarkOpacity      ?? 1.0,
+        globalBackground:      tabData.globalBackground      ?? true,
+        globalBackgroundColor: tabData.globalBackgroundColor ?? '#000000',
       });
       if (tab.watermarkFilename) {
         const libItem = watermarkLibrary.find(w => w.filename === tab.watermarkFilename);
@@ -2300,10 +2391,12 @@ async function restoreSession(sessionData) {
       }
       const tabGrid  = GRIDS.find(g => g.id === tab.gridId);
       const tabCells = tabGrid ? tabGrid.cols * tabGrid.rows : 1;
-      tab.cellStills  = Array.from({ length: tabCells }, (_, i) => sel[i] ?? null);
-      tab.cellOffsets = pad(tabData.cells?.offsets, tabCells, () => ({ x: 0, y: 0 }));
-      tab.cellScales  = pad(tabData.cells?.scales,  tabCells, () => 1.0);
-      tab.cellLocked  = pad(tabData.cells?.locked,  tabCells, () => false);
+      const restoreBg = tabData.globalBackgroundColor ?? '#000000';
+      tab.cellStills      = Array.from({ length: tabCells }, (_, i) => sel[i] ?? null);
+      tab.cellOffsets     = pad(tabData.cells?.offsets,     tabCells, () => ({ x: 0, y: 0 }));
+      tab.cellScales      = pad(tabData.cells?.scales,      tabCells, () => 1.0);
+      tab.cellLocked      = pad(tabData.cells?.locked,      tabCells, () => false);
+      tab.cellBackgrounds = pad(tabData.cells?.backgrounds, tabCells, () => restoreBg);
       return tab;
     });
     state.activeTabIndex = Math.min(
@@ -2358,6 +2451,16 @@ function syncRestoredControls(L) {
   document.querySelectorAll('.corner-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.corner === (L.watermarkCorner ?? 'br'));
   });
+
+  // Cell background swatch + toggle
+  setToggleState('toggle-cell-bg-global', L.globalBackground ?? true);
+  const cellBgSwatch = $('btn-cell-bg-swatch');
+  const cellBgInput  = $('input-cell-bg-color');
+  const bgColor = (L.globalBackground ?? true)
+    ? (L.globalBackgroundColor ?? '#000000')
+    : (L.cellBackgrounds?.[0] ?? '#000000');
+  if (cellBgSwatch) cellBgSwatch.style.backgroundColor = bgColor;
+  if (cellBgInput)  cellBgInput.value = bgColor;
 
   renderWatermarkLibrary();
 }

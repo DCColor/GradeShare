@@ -1373,6 +1373,39 @@ input {
   background: transparent;
 }
 
+/* ── Cell background controls ─────────────────────────────────────── */
+
+.cell-bg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.cell-bg-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--color-border-strong);
+  cursor: pointer;
+  flex-shrink: 0;
+  background: #000000;
+  transition: border-color 0.1s;
+}
+
+.cell-bg-swatch:hover {
+  border-color: var(--color-text-mid);
+}
+
+.btn-cell-bg-reset {
+  font-size: var(--font-size-xxs);
+  padding: 2px 6px;
+}
+
+.cell-bg-toggle-row {
+  margin-top: var(--space-xs);
+}
+
 .layout-cell {
   position: relative;
   overflow: hidden;
