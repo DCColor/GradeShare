@@ -297,31 +297,33 @@ def cmd_get_stills(payload):
         log(f'[get_stills] Gallery path accessible: {gallery_path}')
         pairs = find_gallery_stills(album, gallery_path)
 
+        parsed = []
         if pairs:
-            parsed = []
             for drx_path, img_path in pairs:
                 meta = parse_drx(drx_path)
                 if meta:
                     meta.image_path = img_path
                     parsed.append(meta)
 
-            total  = len(pairs)
-            loaded = len(parsed)
-            log(f'[get_stills] Gallery: {loaded}/{total} stills loaded')
+        # Explicitly count stills whose image file is present and non-empty.
+        valid_gallery = [
+            m for m in parsed
+            if m.image_path and Path(m.image_path).exists() and Path(m.image_path).stat().st_size > 0
+        ]
+        log(f'[get_stills] Gallery path found {len(valid_gallery)} stills with valid images')
 
+        if valid_gallery:
+            total   = len(pairs)
+            loaded  = len(valid_gallery)
             if loaded == total:
                 health  = 'green'
                 message = ''
-            elif loaded > 0:
+            else:
                 health  = 'yellow'
                 message = f'{loaded} of {total} stills loaded from gallery'
-            else:
-                health  = 'red'
-                message = 'Gallery images found but could not be parsed'
-
             log(f'[get_stills] Health: {health}')
             return {
-                'stills':       [still_metadata_to_dict(m) for m in parsed],
+                'stills':       [still_metadata_to_dict(m) for m in valid_gallery],
                 'exportPath':   gallery_path,
                 'health':       health,
                 'totalCount':   total,
@@ -331,72 +333,67 @@ def cmd_get_stills(payload):
                 'message':      message,
             }
 
-        log('[get_stills] Gallery path accessible but no DRX+image pairs found, falling back')
+        # Gallery path accessible but yielded no usable images — fall through.
+        log('[get_stills] Gallery path had no valid stills, falling back to ExportStills')
     else:
         log(f'[get_stills] Gallery path not accessible ({gallery_path!r}), falling back to ExportStills')
 
-    # ── ExportStills fallback ─────────────────────────────────────────────
-    tmp_dir = tempfile.mkdtemp(prefix='gradeshare_preview_')
-    prefix  = 'gs_preview'
+    # ── ExportStills fallback (per-still loop) ───────────────────────────────
+    # Batch ExportStills fails silently for PowerGrade albums; exporting each
+    # still individually is reliable for both album types.
+    tmp_dir     = tempfile.mkdtemp(prefix='gradeshare_preview_')
+    stills_list = stills or []
+    total       = len(stills_list)
 
-    log(f'[get_stills] ExportStills → {tmp_dir}')
-    album.ExportStills(stills or [], tmp_dir, prefix, 'jpg')
+    log(f'[get_stills] ExportStills per-still → {tmp_dir} ({total} stills)')
 
-    # Disk is authoritative — count jpg files that actually landed.
-    try:
-        dir_entries = os.listdir(tmp_dir)
-        jpg_count   = sum(1 for f in dir_entries if f.lower().endswith('.jpg'))
-        drx_count   = sum(1 for f in dir_entries if f.lower().endswith('.drx'))
-    except Exception as e:
-        log(f'[get_stills] Could not list tmp_dir: {e}')
-        jpg_count = drx_count = 0
-
-    log(f'[get_stills] Files on disk after export — jpg: {jpg_count}, drx: {drx_count}')
-
-    if jpg_count == 0:
-        log('[get_stills] No jpg files found — media may not be available on this workstation')
-        return {
-            'stills':       [],
-            'exportPath':   tmp_dir,
-            'health':       'red',
-            'totalCount':   0,
-            'loadedCount':  0,
-            'missingCount': 0,
-            'count':        0,
-            'message':      'No stills could be exported — media may not be available on this workstation',
-        }
-
-    # Parse DRX metadata files
-    parsed = parse_drx_folder(tmp_dir)
-    log(f'[get_stills] Parsed {len(parsed)} DRX files from {tmp_dir}')
-
-    # Validate each exported image exists and has content
     valid = []
-    for m in parsed:
-        img = m.image_path
+    for i, still in enumerate(stills_list):
+        log(f'[get_stills] Exporting still {i+1} of {total}...')
+        try:
+            result = album.ExportStills([still], tmp_dir, f'gs_still_{i}', 'jpg')
+        except Exception as e:
+            log(f'[get_stills] Still {i+1} export raised: {e}')
+            result = False
+
+        if not result:
+            log(f'[get_stills] Still {i+1}: export failed (unavailable media)')
+            continue
+
+        # Resolve appends the still label to the prefix, e.g. gs_still_0_1.1.drx.
+        # Glob for any DRX file whose name starts with this still's prefix.
+        drx_candidates = sorted(Path(tmp_dir).glob(f'gs_still_{i}*.drx'))
+        if not drx_candidates:
+            log(f'[get_stills] Still {i+1}: exported (result=True) but no DRX found')
+            continue
+
+        meta = parse_drx(str(drx_candidates[0]))
+        if not meta:
+            log(f'[get_stills] Still {i+1}: DRX found but failed to parse')
+            continue
+
+        img = meta.image_path
         try:
             img_path = Path(img) if img else None
             if img_path and img_path.exists() and img_path.stat().st_size > 0:
-                valid.append(m)
+                valid.append(meta)
             else:
-                log(f'[get_stills] Skipping invalid image: {img}')
+                log(f'[get_stills] Still {i+1}: DRX parsed but image missing: {img}')
         except Exception as e:
-            log(f'[get_stills] Error checking image {img}: {e}')
+            log(f'[get_stills] Still {i+1}: image check error: {e}')
 
-    # Health is purely disk-based — jpg_count is totalCount, never GetStills() count.
-    total  = jpg_count
-    loaded = len(valid)
-    log(f'[get_stills] {loaded} of {total} stills loaded successfully')
+    valid_count = len(valid)
+    log(f'[get_stills] {valid_count} of {total} stills loaded successfully')
 
-    if loaded == total:
+    if valid_count == 0:
+        health  = 'red'
+        message = 'No stills could be exported — media may not be available on this workstation'
+    elif valid_count == total:
         health  = 'green'
         message = ''
-    elif loaded > 0:
-        health  = 'yellow'
-        message = f'{loaded} of {total} stills loaded — {total - loaded} may be stored on another workstation'
     else:
-        health  = 'red'
-        message = 'Images unavailable — still data may be stored on another workstation'
+        health  = 'yellow'
+        message = f'{valid_count} of {total} stills loaded — {total - valid_count} may be stored on another workstation'
 
     log(f'[get_stills] Health: {health}')
 
@@ -405,9 +402,9 @@ def cmd_get_stills(payload):
         'exportPath':   tmp_dir,
         'health':       health,
         'totalCount':   total,
-        'loadedCount':  loaded,
-        'missingCount': total - loaded,
-        'count':        loaded,
+        'loadedCount':  valid_count,
+        'missingCount': total - valid_count,
+        'count':        valid_count,
         'message':      message,
     }
 
