@@ -286,6 +286,10 @@ def cmd_get_stills(payload):
 
     album  = albums[album_index]
     stills = album.GetStills()
+    # Authoritative still count from Resolve — used as 'total' in both branches
+    # so the health message always reflects the album size, not a file count.
+    album_still_count = len(stills) if stills else 0
+    log(f'[get_stills] Total from GetStills: {album_still_count}')
 
     # ── Gallery path approach ─────────────────────────────────────────────
     # Export the first still to a small probe dir to extract the GalleryPath
@@ -313,9 +317,10 @@ def cmd_get_stills(payload):
         log(f'[get_stills] Gallery path found {len(valid_gallery)} stills with valid images')
 
         if valid_gallery:
-            total   = len(pairs)
+            total   = album_still_count
             loaded  = len(valid_gallery)
-            if loaded == total:
+            log(f'[get_stills] Total from GetStills: {total}, Successfully exported: {loaded}')
+            if loaded >= total:
                 health  = 'green'
                 message = ''
             else:
@@ -328,7 +333,7 @@ def cmd_get_stills(payload):
                 'health':       health,
                 'totalCount':   total,
                 'loadedCount':  loaded,
-                'missingCount': total - loaded,
+                'missingCount': max(0, total - loaded),
                 'count':        loaded,
                 'message':      message,
             }
@@ -343,7 +348,7 @@ def cmd_get_stills(payload):
     # still individually is reliable for both album types.
     tmp_dir     = tempfile.mkdtemp(prefix='gradeshare_preview_')
     stills_list = stills or []
-    total       = len(stills_list)
+    total       = album_still_count  # always use GetStills() count, not file counts
 
     log(f'[get_stills] ExportStills per-still → {tmp_dir} ({total} stills)')
 
@@ -383,12 +388,12 @@ def cmd_get_stills(payload):
             log(f'[get_stills] Still {i+1}: image check error: {e}')
 
     valid_count = len(valid)
-    log(f'[get_stills] {valid_count} of {total} stills loaded successfully')
+    log(f'[get_stills] Total from GetStills: {total}, Successfully exported: {valid_count}')
 
     if valid_count == 0:
         health  = 'red'
         message = 'No stills could be exported — media may not be available on this workstation'
-    elif valid_count == total:
+    elif valid_count >= total:
         health  = 'green'
         message = ''
     else:
@@ -403,7 +408,7 @@ def cmd_get_stills(payload):
         'health':       health,
         'totalCount':   total,
         'loadedCount':  valid_count,
-        'missingCount': total - valid_count,
+        'missingCount': max(0, total - valid_count),
         'count':        valid_count,
         'message':      message,
     }

@@ -374,7 +374,12 @@ async function loadStills(albumIndex, albumType) {
   state.gallery.selectedStillIds = [];
   state.gallery.selectedStills   = [];
 
-  showHealthNotice('unknown', 0, '');
+  // Immediately wipe the notice bar so a stale red/yellow banner from the
+  // previous album never persists while the new IPC call is in flight.
+  const _notice = $('gallery-health-notice');
+  _notice.hidden = true;
+  _notice.className = 'gallery-health-notice';
+  _notice.querySelector('.health-notice-text').textContent = '';
   if (!_restoringSession) switchScreen('gallery');
 
   const grid = $('still-grid');
