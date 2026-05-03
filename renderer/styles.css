@@ -325,6 +325,86 @@ input {
   border-bottom-color: var(--color-primary);
 }
 
+/* ── Layout tab bar ──────────────────────────────────────────────────────── */
+
+.layout-tab-bar {
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  background: var(--color-bg-deep);
+  border-bottom: var(--border) var(--color-border-subtle);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 0 var(--space-md);
+  gap: 2px;
+}
+
+.layout-tab-bar::-webkit-scrollbar { display: none; }
+
+.layout-tab-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+
+.layout-tab-btn:hover { color: var(--color-text-mid); }
+
+.layout-tab-btn.active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.layout-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 3px;
+  opacity: 0.45;
+  transition: opacity 0.1s, background 0.1s;
+}
+
+.layout-tab-close:hover {
+  opacity: 1;
+  background: var(--color-primary-bg);
+}
+
+.layout-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--color-text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.1s;
+  align-self: center;
+}
+
+.layout-tab-add:hover { opacity: 1; }
+
 /* ── Screens ──────────────────────────────────────────────────────────────── */
 
 #screens {
@@ -1406,6 +1486,16 @@ input {
   align-items: center;
   gap: var(--space-sm);
 }
+
+.gallery-zoom-slider {
+  width: 80px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.1s;
+}
+
+.gallery-zoom-slider:hover { opacity: 1; }
 
 .btn-go-social[hidden] {
   display: none;

@@ -196,6 +196,8 @@
           <div class="gallery-toolbar">
             <span id="gallery-count" class="gallery-count">0 stills</span>
             <div class="gallery-toolbar-actions">
+              <input id="gallery-zoom-slider" type="range" min="1" max="5" step="0.1" value="3"
+                     class="gallery-zoom-slider" title="Grid size">
               <button id="btn-select-all" class="btn-subtle">Select all</button>
               <button id="btn-clear-selection" class="btn-subtle">Clear</button>
               <button id="btn-go-social" class="btn-go-social" hidden></button>
@@ -213,6 +215,7 @@
 
         <!-- Layout ───────────────────────────────────────────────────────── -->
         <div id="screen-social" class="screen">
+          <div id="layout-tab-bar" class="layout-tab-bar"></div>
           <div class="split-layout">
 
             <div class="split-preview">

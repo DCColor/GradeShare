@@ -92,6 +92,7 @@ const state = {
     selectedStills:     [],
     loading:            false,
     albumHealth:        {},
+    zoomLevel:          3,
   },
   layout: {
     platformId:     'ig-portrait',
@@ -103,7 +104,7 @@ const state = {
     captionMode:       'none',
     watermarkDataUrl:  null,
     watermarkFilename: null,
-    watermarkCorner:   'tr',
+    watermarkCorner:   'br',
     watermarkMode:     'canvas',
     watermarkSize:     15,
     watermarkOpacity:  1.0,
@@ -141,6 +142,8 @@ const state = {
   ui: {
     activeScreen: 'connect',
   },
+  layoutTabs:     [],  // initialised in init()
+  activeTabIndex: 0,
 };
 
 // ── DOM helper ─────────────────────────────────────────────────────────────
@@ -477,6 +480,8 @@ function renderStillGrid(stills) {
     card.addEventListener('click', () => { handleStillClick(index); triggerAutoSave(); });
     grid.appendChild(card);
   });
+
+  applyGalleryZoom();
 }
 
 function syncSelectedStills() {
@@ -538,6 +543,16 @@ function setupGalleryToolbar() {
   $('btn-select-all').addEventListener('click', handleSelectAll);
   $('btn-clear-selection').addEventListener('click', handleClearSelection);
   $('btn-go-social').addEventListener('click', () => switchScreen('social'));
+
+  const zoomSlider = $('gallery-zoom-slider');
+  if (zoomSlider) {
+    zoomSlider.value = String(state.gallery.zoomLevel);
+    zoomSlider.addEventListener('input', () => {
+      state.gallery.zoomLevel = parseFloat(zoomSlider.value);
+      applyGalleryZoom();
+      triggerAutoSave();
+    });
+  }
 }
 
 // ── Generic picker ─────────────────────────────────────────────────────────
@@ -609,7 +624,9 @@ function resetLayoutCellState(cellCount) {
 }
 
 function updateSocialFromGallery() {
-  const sel        = state.gallery.selectedStills;
+  const sel = state.gallery.selectedStills;
+
+  // Update the live layout state (active tab)
   const grid       = GRIDS.find(g => g.id === state.layout.gridId);
   const cellCount  = grid ? grid.cols * grid.rows : Math.max(state.layout.cellStills.length, 1);
   const prevLocked = state.layout.cellLocked;
@@ -619,10 +636,186 @@ function updateSocialFromGallery() {
   state.layout.cellScales  = Array.from({ length: cellCount }, () => 1.0);
   state.layout.cellLocked  = Array.from({ length: cellCount }, (_, i) => prevLocked[i] ?? false);
 
+  // Propagate same stills to all inactive tabs (pan/zoom/lock stays per-tab)
+  state.layoutTabs.forEach((tab, i) => {
+    if (i === state.activeTabIndex) return;
+    const tabGrid  = GRIDS.find(g => g.id === tab.gridId);
+    const tabCells = tabGrid ? tabGrid.cols * tabGrid.rows : Math.max(tab.cellStills.length, 1);
+    tab.cellStills  = Array.from({ length: tabCells }, (_, j) => sel[j] ?? null);
+    tab.cellOffsets = Array.from({ length: tabCells }, () => ({ x: 0, y: 0 }));
+    tab.cellScales  = Array.from({ length: tabCells }, () => 1.0);
+    tab.cellLocked  = Array.from({ length: tabCells }, (_, j) => tab.cellLocked[j] ?? false);
+  });
+
   if (state.ui.activeScreen === 'social') {
     updateLayoutCanvas();
   } else {
     needsCanvasRefresh = true;
+  }
+}
+
+// ── Tab management ─────────────────────────────────────────────────────────
+
+function tabLabel(platformId, gridId) {
+  const p = PLATFORMS.find(p => p.id === platformId);
+  const g = GRIDS.find(g => g.id === gridId);
+  return `${p?.label ?? platformId} ${g?.label ?? gridId}`;
+}
+
+function makeNewTab(platformId = 'ig-portrait', gridId = '1x1') {
+  return {
+    id:              Date.now(),
+    label:           tabLabel(platformId, gridId),
+    platformId,
+    gridId,
+    captionMode:     'none',
+    captionProject:  '',
+    captionStudio:   '',
+    showFilename:    false,
+    showWatermark:   true,
+    watermarkDataUrl:  null,
+    watermarkFilename: null,
+    watermarkCorner:   'br',
+    watermarkMode:     'canvas',
+    watermarkSize:     15,
+    watermarkOpacity:  1.0,
+    cellStills:  [],
+    cellOffsets: [],
+    cellScales:  [],
+    cellLocked:  [],
+  };
+}
+
+function saveCurrentTabState() {
+  const tab = state.layoutTabs[state.activeTabIndex];
+  if (!tab) return;
+  tab.platformId      = state.layout.platformId;
+  tab.gridId          = state.layout.gridId;
+  tab.captionMode     = state.layout.captionMode;
+  tab.captionProject  = state.layout.captionProject;
+  tab.captionStudio   = state.layout.captionStudio;
+  tab.showFilename    = state.layout.showFilename;
+  tab.showWatermark   = state.layout.showWatermark;
+  tab.watermarkDataUrl  = state.layout.watermarkDataUrl;
+  tab.watermarkFilename = state.layout.watermarkFilename;
+  tab.watermarkCorner   = state.layout.watermarkCorner;
+  tab.watermarkMode     = state.layout.watermarkMode;
+  tab.watermarkSize     = state.layout.watermarkSize;
+  tab.watermarkOpacity  = state.layout.watermarkOpacity;
+  tab.cellStills  = state.layout.cellStills.slice();
+  tab.cellOffsets = state.layout.cellOffsets.map(o => ({ ...o }));
+  tab.cellScales  = state.layout.cellScales.slice();
+  tab.cellLocked  = state.layout.cellLocked.slice();
+  tab.label       = tabLabel(state.layout.platformId, state.layout.gridId);
+}
+
+function loadTabState(idx) {
+  const tab = state.layoutTabs[idx];
+  if (!tab) return;
+  state.layout.platformId      = tab.platformId;
+  state.layout.gridId          = tab.gridId;
+  state.layout.captionMode     = tab.captionMode;
+  state.layout.captionProject  = tab.captionProject;
+  state.layout.captionStudio   = tab.captionStudio;
+  state.layout.showFilename    = tab.showFilename;
+  state.layout.showWatermark   = tab.showWatermark;
+  state.layout.watermarkDataUrl  = tab.watermarkDataUrl;
+  state.layout.watermarkFilename = tab.watermarkFilename;
+  state.layout.watermarkCorner   = tab.watermarkCorner;
+  state.layout.watermarkMode     = tab.watermarkMode;
+  state.layout.watermarkSize     = tab.watermarkSize;
+  state.layout.watermarkOpacity  = tab.watermarkOpacity;
+  state.layout.cellStills  = tab.cellStills.slice();
+  state.layout.cellOffsets = tab.cellOffsets.map(o => ({ ...o }));
+  state.layout.cellScales  = tab.cellScales.slice();
+  state.layout.cellLocked  = tab.cellLocked.slice();
+}
+
+function renderTabBar() {
+  const bar = $('layout-tab-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+
+  state.layoutTabs.forEach((tab, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'layout-tab-btn' + (i === state.activeTabIndex ? ' active' : '');
+
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = tab.label;
+    btn.appendChild(labelSpan);
+
+    if (i > 0) {
+      const closeEl = document.createElement('span');
+      closeEl.className   = 'layout-tab-close';
+      closeEl.textContent = '×';
+      closeEl.addEventListener('click', e => { e.stopPropagation(); closeTab(i); });
+      btn.appendChild(closeEl);
+    }
+
+    btn.addEventListener('click', () => switchToTab(i));
+    bar.appendChild(btn);
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.className   = 'layout-tab-add';
+  addBtn.textContent = '+';
+  addBtn.title       = 'New tab';
+  addBtn.addEventListener('click', addTab);
+  bar.appendChild(addBtn);
+}
+
+function switchToTab(idx) {
+  if (idx === state.activeTabIndex) return;
+  saveCurrentTabState();
+  state.activeTabIndex = idx;
+  loadTabState(idx);
+  renderTabBar();
+  syncRestoredControls(state.layout);
+  updateLayoutCanvas();
+  triggerAutoSave();
+}
+
+function addTab() {
+  saveCurrentTabState();
+  const tab = makeNewTab('ig-portrait', '1x1');
+  // New tab starts with the same selected stills (1 cell = first still)
+  const sel = state.gallery.selectedStills;
+  tab.cellStills  = [sel[0] ?? null];
+  tab.cellOffsets = [{ x: 0, y: 0 }];
+  tab.cellScales  = [1.0];
+  tab.cellLocked  = [false];
+  state.layoutTabs.push(tab);
+  state.activeTabIndex = state.layoutTabs.length - 1;
+  loadTabState(state.activeTabIndex);
+  renderTabBar();
+  syncRestoredControls(state.layout);
+  updateLayoutCanvas();
+  triggerAutoSave();
+}
+
+function closeTab(idx) {
+  if (idx === 0 || idx >= state.layoutTabs.length) return;
+  const wasActive = idx === state.activeTabIndex;
+  state.layoutTabs.splice(idx, 1);
+  if (wasActive || state.activeTabIndex >= state.layoutTabs.length) {
+    state.activeTabIndex = Math.max(0, Math.min(state.activeTabIndex, state.layoutTabs.length - 1));
+    loadTabState(state.activeTabIndex);
+    syncRestoredControls(state.layout);
+    updateLayoutCanvas();
+  } else if (state.activeTabIndex > idx) {
+    state.activeTabIndex--;
+  }
+  renderTabBar();
+  triggerAutoSave();
+}
+
+// ── Gallery zoom ────────────────────────────────────────────────────────────
+
+function applyGalleryZoom() {
+  const grid = $('still-grid');
+  if (grid) {
+    const cols = Math.round(6 - state.gallery.zoomLevel);
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   }
 }
 
@@ -1137,6 +1330,10 @@ function setupLayoutScreen() {
     state.layout.platformId  = id;
     state.layout.cellOffsets = state.layout.cellOffsets.map(() => ({ x: 0, y: 0 }));
     state.layout.cellScales  = state.layout.cellScales.map(() => 1.0);
+    if (state.layoutTabs[state.activeTabIndex]) {
+      state.layoutTabs[state.activeTabIndex].label = tabLabel(id, state.layout.gridId);
+      renderTabBar();
+    }
     updateLayoutCanvas();
     triggerAutoSave();
   });
@@ -1147,6 +1344,10 @@ function setupLayoutScreen() {
     state.layout.gridId = id;
     const g = GRIDS.find(gr => gr.id === id);
     if (g) resetLayoutCellState(g.cols * g.rows);
+    if (state.layoutTabs[state.activeTabIndex]) {
+      state.layoutTabs[state.activeTabIndex].label = tabLabel(state.layout.platformId, id);
+      renderTabBar();
+    }
     updateLayoutCanvas();
     triggerAutoSave();
   });
@@ -1494,12 +1695,17 @@ function showSaveStatus(text) {
 }
 
 function buildSessionJSON(sessionName) {
+  // Flush active tab before serialising so its saved state is current
+  if (state.layoutTabs.length > 0) saveCurrentTabState();
+
   const sel = state.gallery.selectedStills;
+
   return {
-    version:     1,
+    version:     2,
     savedAt:     new Date().toISOString(),
     name:        sessionName ?? null,
     projectName: state.project.name ?? '',
+    // Legacy single-layout fields — kept for backward compatibility
     layout: {
       platformId:        state.layout.platformId,
       gridId:            state.layout.gridId,
@@ -1522,6 +1728,7 @@ function buildSessionJSON(sessionName) {
         : state.project.powerGradeAlbums
       )[state.gallery.selectedAlbumIndex]?.name ?? null,
       selectedStillPaths: sel.map(s => s.imagePath ?? s.image_path ?? s.path ?? ''),
+      zoomLevel:          state.gallery.zoomLevel,
     },
     cells: {
       offsets:          state.layout.cellOffsets,
@@ -1533,6 +1740,29 @@ function buildSessionJSON(sessionName) {
         return idx >= 0 ? idx : null;
       }),
     },
+    // Tab workspace
+    layoutTabs: state.layoutTabs.map(tab => ({
+      id:              tab.id,
+      label:           tab.label,
+      platformId:      tab.platformId,
+      gridId:          tab.gridId,
+      captionMode:     tab.captionMode,
+      captionProject:  tab.captionProject,
+      captionStudio:   tab.captionStudio,
+      showFilename:    tab.showFilename,
+      showWatermark:   tab.showWatermark,
+      watermarkFilename: tab.watermarkFilename ?? null,
+      watermarkCorner:   tab.watermarkCorner,
+      watermarkMode:     tab.watermarkMode,
+      watermarkSize:     tab.watermarkSize,
+      watermarkOpacity:  tab.watermarkOpacity,
+      cells: {
+        offsets: tab.cellOffsets,
+        scales:  tab.cellScales,
+        locked:  tab.cellLocked,
+      },
+    })),
+    activeTabIndex: state.activeTabIndex,
   };
 }
 
@@ -1861,7 +2091,7 @@ async function restoreSession(sessionData) {
   state.layout.captionStudio    = L.captionStudio    ?? '';
   state.layout.showFilename     = L.showFilename     ?? false;
   state.layout.showWatermark    = L.showWatermark    ?? true;
-  state.layout.watermarkCorner  = L.watermarkCorner  ?? 'tr';
+  state.layout.watermarkCorner  = L.watermarkCorner  ?? 'br';
   state.layout.watermarkMode    = L.watermarkMode    ?? 'canvas';
   state.layout.watermarkSize    = L.watermarkSize    ?? 15;
   state.layout.watermarkOpacity = L.watermarkOpacity ?? 1.0;
@@ -2037,6 +2267,56 @@ async function restoreSession(sessionData) {
   state.layout.cellScales  = pad(C?.scales,  cellCount, () => 1.0);
   state.layout.cellLocked  = pad(C?.locked,  cellCount, () => false);
 
+  // 8a. Restore gallery zoom level
+  if (sessionData.gallery?.zoomLevel != null) {
+    state.gallery.zoomLevel = sessionData.gallery.zoomLevel;
+    const zoomSlider = $('gallery-zoom-slider');
+    if (zoomSlider) zoomSlider.value = String(state.gallery.zoomLevel);
+    applyGalleryZoom();
+  }
+
+  // 8b. Restore tab workspace (v2 sessions only)
+  if (sessionData.layoutTabs && sessionData.layoutTabs.length > 0) {
+    const sel = state.gallery.selectedStills;
+    state.layoutTabs = sessionData.layoutTabs.map(tabData => {
+      const tab = makeNewTab(tabData.platformId ?? 'ig-portrait', tabData.gridId ?? '2x2');
+      Object.assign(tab, {
+        id:              tabData.id ?? Date.now(),
+        label:           tabData.label ?? tabLabel(tabData.platformId, tabData.gridId),
+        captionMode:     tabData.captionMode     ?? 'none',
+        captionProject:  tabData.captionProject  ?? '',
+        captionStudio:   tabData.captionStudio   ?? '',
+        showFilename:    tabData.showFilename     ?? false,
+        showWatermark:   tabData.showWatermark    ?? true,
+        watermarkFilename: tabData.watermarkFilename ?? null,
+        watermarkCorner:   tabData.watermarkCorner ?? 'br',
+        watermarkMode:     tabData.watermarkMode  ?? 'canvas',
+        watermarkSize:     tabData.watermarkSize  ?? 15,
+        watermarkOpacity:  tabData.watermarkOpacity ?? 1.0,
+      });
+      if (tab.watermarkFilename) {
+        const libItem = watermarkLibrary.find(w => w.filename === tab.watermarkFilename);
+        if (libItem) tab.watermarkDataUrl = libItem.fileUrl;
+      }
+      const tabGrid  = GRIDS.find(g => g.id === tab.gridId);
+      const tabCells = tabGrid ? tabGrid.cols * tabGrid.rows : 1;
+      tab.cellStills  = Array.from({ length: tabCells }, (_, i) => sel[i] ?? null);
+      tab.cellOffsets = pad(tabData.cells?.offsets, tabCells, () => ({ x: 0, y: 0 }));
+      tab.cellScales  = pad(tabData.cells?.scales,  tabCells, () => 1.0);
+      tab.cellLocked  = pad(tabData.cells?.locked,  tabCells, () => false);
+      return tab;
+    });
+    state.activeTabIndex = Math.min(
+      sessionData.activeTabIndex ?? 0,
+      state.layoutTabs.length - 1
+    );
+    loadTabState(state.activeTabIndex);
+  } else {
+    // v1 session — ensure the single default tab reflects restored layout
+    saveCurrentTabState();
+  }
+  renderTabBar();
+
   // 9. Sync UI controls then navigate to Social — canvas renders with restored state
   syncRestoredControls(L);
   switchScreen('social');
@@ -2076,7 +2356,7 @@ function syncRestoredControls(L) {
     btn.classList.toggle('active', btn.dataset.id === (L.watermarkMode ?? 'canvas'));
   });
   document.querySelectorAll('.corner-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.corner === (L.watermarkCorner ?? 'tr'));
+    btn.classList.toggle('active', btn.dataset.corner === (L.watermarkCorner ?? 'br'));
   });
 
   renderWatermarkLibrary();
@@ -2092,6 +2372,11 @@ function setToggleState(id, on) {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 function init() {
+  // Bootstrap the tab workspace — one default tab mirroring initial state.layout
+  state.layoutTabs     = [makeNewTab(state.layout.platformId, state.layout.gridId)];
+  state.activeTabIndex = 0;
+  saveCurrentTabState(); // sync initial layout values into tab 0
+
   setupTabNav();
   setupConnectScreen();
   setupGalleryToolbar();
@@ -2103,6 +2388,7 @@ function init() {
   initDocumentDragHandlers();
   setupResizeListener();
   loadWatermarkLibrary();
+  renderTabBar();
 }
 
 document.addEventListener('DOMContentLoaded', init);
