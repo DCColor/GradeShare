@@ -1373,6 +1373,83 @@ input {
   background: transparent;
 }
 
+/* ── Tweaks section ───────────────────────────────────────────────── */
+
+.tweaks-section-divider {
+  height: 0.5px;
+  background: var(--color-border-subtle);
+  margin: var(--space-xs) 0 var(--space-md);
+  flex-shrink: 0;
+}
+
+.tweaks-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-md);
+}
+
+.tweaks-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-dim);
+  letter-spacing: var(--tracking-widest);
+}
+
+.tweaks-subtitle {
+  font-size: 10px;
+  color: rgb(80, 80, 88);
+  line-height: 1.3;
+}
+
+.tweaks-scope-row {
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.tweak-slider-row {
+  margin-bottom: var(--space-md);
+}
+
+.tweak-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.tweak-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-dim);
+  transition: color 0.1s;
+}
+
+.tweak-value {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: right;
+  transition: color 0.1s;
+}
+
+.tweak-slider {
+  width: 100%;
+  height: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+  accent-color: rgb(230, 5, 1);
+  cursor: pointer;
+  background: transparent;
+}
+
+.btn-tweak-reset {
+  font-size: var(--font-size-xxs);
+  padding: 2px 8px;
+  margin-top: var(--space-xs);
+}
+
 /* ── Cell background controls ─────────────────────────────────────── */
 
 .cell-bg-row {

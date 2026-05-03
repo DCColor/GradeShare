@@ -6,7 +6,7 @@
  * - Routes IPC between renderer and Python
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
 const path             = require('path');
 const fs               = require('fs');
 const { pathToFileURL } = require('url');
@@ -360,14 +360,63 @@ ipcMain.handle('watermark:delete', async (event, { filename }) => {
   }
 });
 
+// ── Window state persistence ──────────────────────────────────────────────
+
+const DEFAULT_WIDTH  = 1400;
+const DEFAULT_HEIGHT = 860;
+
+function windowStatePath() {
+  return path.join(appDataDir(), 'window-state.json');
+}
+
+function loadWindowState() {
+  try {
+    const stateFile = windowStatePath();
+    if (!fs.existsSync(stateFile)) return null;
+    const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    if (!saved || typeof saved.width !== 'number' || typeof saved.height !== 'number') return null;
+    // Validate that the saved bounds overlap at least one connected display's work area
+    const valid = screen.getAllDisplays().some(d => {
+      const wa = d.workArea;
+      return saved.x < wa.x + wa.width  &&
+             saved.x + saved.width  > wa.x &&
+             saved.y < wa.y + wa.height &&
+             saved.y + saved.height > wa.y;
+    });
+    return valid ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+let _saveWindowStateTimer = null;
+
+function saveWindowState(win) {
+  clearTimeout(_saveWindowStateTimer);
+  _saveWindowStateTimer = setTimeout(() => {
+    try {
+      if (!win || win.isDestroyed()) return;
+      const bounds = win.getBounds();
+      const dir = appDataDir();
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(windowStatePath(), JSON.stringify(bounds), 'utf8');
+    } catch (e) {
+      console.error('[WindowState] Failed to save:', e.message);
+    }
+  }, 500);
+}
+
 // ── Window ────────────────────────────────────────────────────────────────
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width:           1100,
-    height:          720,
-    minWidth:        900,
-    minHeight:       600,
+  const saved = loadWindowState();
+
+  const windowOptions = {
+    ...(saved
+      ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height }
+      : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }),
+    minWidth:        1000,
+    minHeight:       660,
     titleBarStyle:   'hiddenInset',  // macOS native traffic lights
     backgroundColor: '#181614',
     webPreferences: {
@@ -375,7 +424,14 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration:  false,
     },
-  });
+  };
+
+  mainWindow = new BrowserWindow(windowOptions);
+
+  // Center on first launch (no saved state)
+  if (!saved) {
+    mainWindow.center();
+  }
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
@@ -383,6 +439,10 @@ function createWindow() {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
   }
+
+  // Persist bounds on resize/move (debounced 500ms)
+  mainWindow.on('resize', () => saveWindowState(mainWindow));
+  mainWindow.on('move',   () => saveWindowState(mainWindow));
 
   mainWindow.on('closed', () => {
     mainWindow = null;

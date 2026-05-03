@@ -115,6 +115,9 @@ const state = {
     cellBackgrounds:       [],
     globalBackground:      true,
     globalBackgroundColor: '#000000',
+    tweakScope:     'all',
+    tweakActiveCell: 0,
+    cellTweaks:     [],
   },
   contactSheet: {
     gridId:          '3x2',
@@ -627,6 +630,7 @@ function resetLayoutCellState(cellCount) {
   state.layout.cellScales      = Array.from({ length: cellCount }, () => 1.0);
   state.layout.cellLocked      = Array.from({ length: cellCount }, () => false);
   state.layout.cellBackgrounds = Array.from({ length: cellCount }, () => bg);
+  state.layout.cellTweaks      = Array.from({ length: cellCount }, () => ({ contrast: 0, lift: 0, saturation: 0 }));
 }
 
 function updateSocialFromGallery() {
@@ -642,6 +646,7 @@ function updateSocialFromGallery() {
   state.layout.cellScales      = Array.from({ length: cellCount }, () => 1.0);
   state.layout.cellLocked      = Array.from({ length: cellCount }, (_, i) => prevLocked[i] ?? false);
   state.layout.cellBackgrounds = Array.from({ length: cellCount }, (_, i) => state.layout.cellBackgrounds[i] ?? state.layout.globalBackgroundColor ?? '#000000');
+  state.layout.cellTweaks      = Array.from({ length: cellCount }, (_, i) => state.layout.cellTweaks[i] ?? { contrast: 0, lift: 0, saturation: 0 });
 
   // Propagate same stills to all inactive tabs (pan/zoom/lock stays per-tab)
   state.layoutTabs.forEach((tab, i) => {
@@ -653,6 +658,7 @@ function updateSocialFromGallery() {
     tab.cellScales      = Array.from({ length: tabCells }, () => 1.0);
     tab.cellLocked      = Array.from({ length: tabCells }, (_, j) => tab.cellLocked[j] ?? false);
     tab.cellBackgrounds = Array.from({ length: tabCells }, (_, j) => tab.cellBackgrounds[j] ?? tab.globalBackgroundColor ?? '#000000');
+    tab.cellTweaks      = Array.from({ length: tabCells }, (_, j) => tab.cellTweaks[j] ?? { contrast: 0, lift: 0, saturation: 0 });
   });
 
   if (state.ui.activeScreen === 'social') {
@@ -694,6 +700,9 @@ function makeNewTab(platformId = 'ig-portrait', gridId = '1x1') {
     cellBackgrounds:       [],
     globalBackground:      true,
     globalBackgroundColor: '#000000',
+    tweakScope:     'all',
+    tweakActiveCell: 0,
+    cellTweaks:     [],
   };
 }
 
@@ -717,10 +726,13 @@ function saveCurrentTabState() {
   tab.cellOffsets      = state.layout.cellOffsets.map(o => ({ ...o }));
   tab.cellScales       = state.layout.cellScales.slice();
   tab.cellLocked       = state.layout.cellLocked.slice();
-  tab.cellBackgrounds      = state.layout.cellBackgrounds.slice();
-  tab.globalBackground     = state.layout.globalBackground;
+  tab.cellBackgrounds       = state.layout.cellBackgrounds.slice();
+  tab.globalBackground      = state.layout.globalBackground;
   tab.globalBackgroundColor = state.layout.globalBackgroundColor;
-  tab.label            = tabLabel(state.layout.platformId, state.layout.gridId);
+  tab.tweakScope      = state.layout.tweakScope;
+  tab.tweakActiveCell = state.layout.tweakActiveCell;
+  tab.cellTweaks      = state.layout.cellTweaks.map(t => ({ ...t }));
+  tab.label           = tabLabel(state.layout.platformId, state.layout.gridId);
 }
 
 function loadTabState(idx) {
@@ -746,6 +758,9 @@ function loadTabState(idx) {
   state.layout.cellBackgrounds       = (tab.cellBackgrounds ?? []).slice();
   state.layout.globalBackground      = tab.globalBackground      ?? true;
   state.layout.globalBackgroundColor = tab.globalBackgroundColor ?? '#000000';
+  state.layout.tweakScope      = tab.tweakScope      ?? 'all';
+  state.layout.tweakActiveCell = tab.tweakActiveCell ?? 0;
+  state.layout.cellTweaks      = (tab.cellTweaks ?? []).map(t => ({ ...t }));
 }
 
 function renderTabBar() {
@@ -912,6 +927,10 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
         state.layout.cellOffsets[i] = { x, y };
         img.style.left = `${x}px`;
         img.style.top  = `${y}px`;
+
+        // Apply tweaks filter (contrast / lift / saturation)
+        const tweaks = state.layout.cellTweaks[i] ?? { contrast: 0, lift: 0, saturation: 0 };
+        img.style.filter = buildTweaksFilter(tweaks);
       };
 
       cell.appendChild(img);
@@ -961,7 +980,9 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
           if (e.button !== 0) return;
           e.preventDefault();
           _activeCellIndex = i;
+          state.layout.tweakActiveCell = i;
           updateCellBgSwatch();
+          syncTweakSliders();
           _dragState = {
             img, cellEl: cell, cellIndex: i, cellW, cellH,
             startX: e.clientX, startY: e.clientY,
@@ -992,7 +1013,9 @@ function buildLayoutCell(i, cellW, cellH, canvasW) {
     cell.classList.add('layout-cell-empty');
     cell.addEventListener('click', () => {
       _activeCellIndex = i;
+      state.layout.tweakActiveCell = i;
       updateCellBgSwatch();
+      syncTweakSliders();
       assignStillToCell(i);
     });
   }
@@ -1363,6 +1386,60 @@ function updateLayoutCanvas() {
   }
 }
 
+// ── Tweaks helpers ─────────────────────────────────────────────────────────
+
+function formatTweakValue(v) {
+  if (v === 0) return '0';
+  return v > 0 ? `+${v}` : String(v);
+}
+
+function buildTweaksFilter(tweaks) {
+  const { contrast = 0, lift = 0, saturation = 0 } = tweaks;
+  const c = (contrast + 100) / 100;
+  const b = (lift / 200) + 1.0;
+  const s = (saturation + 100) / 100;
+  if (c === 1.0 && b === 1.0 && s === 1.0) return '';
+  return `contrast(${c.toFixed(3)}) brightness(${b.toFixed(3)}) saturate(${s.toFixed(3)})`;
+}
+
+function applyTweaksToCell(cellIndex) {
+  const canvasEl = $('layout-canvas');
+  if (!canvasEl) return;
+  const imgEl = canvasEl.querySelector(`.layout-cell[data-cell-index="${cellIndex}"] .layout-cell-img`);
+  if (!imgEl) return;
+  const tweaks = state.layout.cellTweaks[cellIndex] ?? { contrast: 0, lift: 0, saturation: 0 };
+  imgEl.style.filter = buildTweaksFilter(tweaks);
+}
+
+function syncTweakSliders() {
+  const idx    = state.layout.tweakScope === 'cell'
+    ? (state.layout.tweakActiveCell ?? 0)
+    : 0;
+  const tweaks = state.layout.cellTweaks[idx] ?? { contrast: 0, lift: 0, saturation: 0 };
+
+  [
+    { sliderId: 'tweak-contrast-slider',   valueId: 'tweak-contrast-value',   labelId: 'tweak-contrast-label',   key: 'contrast'   },
+    { sliderId: 'tweak-lift-slider',       valueId: 'tweak-lift-value',       labelId: 'tweak-lift-label',       key: 'lift'       },
+    { sliderId: 'tweak-saturation-slider', valueId: 'tweak-saturation-value', labelId: 'tweak-saturation-label', key: 'saturation' },
+  ].forEach(({ sliderId, valueId, labelId, key }) => {
+    const v       = tweaks[key] ?? 0;
+    const slider  = $(sliderId);
+    const valueEl = $(valueId);
+    const labelEl = $(labelId);
+    if (slider)  slider.value = String(v);
+    if (valueEl) {
+      valueEl.textContent = formatTweakValue(v);
+      valueEl.style.color = v !== 0 ? 'var(--color-text-mid)' : '';
+    }
+    if (labelEl) labelEl.style.color = v !== 0 ? 'var(--color-text-primary)' : '';
+  });
+
+  const allBtn  = $('tweak-scope-all');
+  const cellBtn = $('tweak-scope-cell');
+  if (allBtn)  allBtn.classList.toggle('active',  state.layout.tweakScope !== 'cell');
+  if (cellBtn) cellBtn.classList.toggle('active', state.layout.tweakScope === 'cell');
+}
+
 function setupLayoutScreen() {
   const platformEl = $('platform-picker');
   platformEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xs)';
@@ -1431,6 +1508,63 @@ function setupLayoutScreen() {
     updateLayoutCanvas();
     triggerAutoSave();
   });
+
+  // ── Tweaks section ────────────────────────────────────────────────────────
+  function getTweakWriteTargets() {
+    if (state.layout.tweakScope === 'all') {
+      return state.layout.cellTweaks.map((_, i) => i);
+    }
+    return [state.layout.tweakActiveCell ?? 0];
+  }
+
+  [$('tweak-scope-all'), $('tweak-scope-cell')].forEach(btn => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      state.layout.tweakScope = btn.dataset.scope;
+      syncTweakSliders();
+      triggerAutoSave();
+    });
+  });
+
+  [
+    { sliderId: 'tweak-contrast-slider',   valueId: 'tweak-contrast-value',   labelId: 'tweak-contrast-label',   key: 'contrast'   },
+    { sliderId: 'tweak-lift-slider',       valueId: 'tweak-lift-value',       labelId: 'tweak-lift-label',       key: 'lift'       },
+    { sliderId: 'tweak-saturation-slider', valueId: 'tweak-saturation-value', labelId: 'tweak-saturation-label', key: 'saturation' },
+  ].forEach(({ sliderId, valueId, labelId, key }) => {
+    const slider  = $(sliderId);
+    const valueEl = $(valueId);
+    const labelEl = $(labelId);
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      const v = parseInt(slider.value, 10);
+      if (valueEl) {
+        valueEl.textContent = formatTweakValue(v);
+        valueEl.style.color = v !== 0 ? 'var(--color-text-mid)' : '';
+      }
+      if (labelEl) labelEl.style.color = v !== 0 ? 'var(--color-text-primary)' : '';
+      getTweakWriteTargets().forEach(idx => {
+        if (!state.layout.cellTweaks[idx]) state.layout.cellTweaks[idx] = { contrast: 0, lift: 0, saturation: 0 };
+        state.layout.cellTweaks[idx][key] = v;
+        applyTweaksToCell(idx);
+      });
+      triggerAutoSave();
+    });
+  });
+
+  const tweakResetBtn = $('btn-tweak-reset');
+  if (tweakResetBtn) {
+    tweakResetBtn.addEventListener('click', () => {
+      getTweakWriteTargets().forEach(idx => {
+        if (!state.layout.cellTweaks[idx]) state.layout.cellTweaks[idx] = { contrast: 0, lift: 0, saturation: 0 };
+        state.layout.cellTweaks[idx].contrast   = 0;
+        state.layout.cellTweaks[idx].lift        = 0;
+        state.layout.cellTweaks[idx].saturation  = 0;
+        applyTweaksToCell(idx);
+      });
+      syncTweakSliders();
+      triggerAutoSave();
+    });
+  }
 
   renderPicker('caption-mode-picker', [
     { id: 'none',    label: 'None'    },
@@ -1802,6 +1936,9 @@ function buildSessionJSON(sessionName) {
       globalBackground:      state.layout.globalBackground,
       globalBackgroundColor: state.layout.globalBackgroundColor,
       cellBackgrounds:       state.layout.cellBackgrounds,
+      tweakScope:            state.layout.tweakScope,
+      tweakActiveCell:       state.layout.tweakActiveCell,
+      cellTweaks:            state.layout.cellTweaks,
     },
     gallery: {
       selectedAlbumIndex: state.gallery.selectedAlbumIndex,
@@ -1844,9 +1981,12 @@ function buildSessionJSON(sessionName) {
         scales:      tab.cellScales,
         locked:      tab.cellLocked,
         backgrounds: tab.cellBackgrounds,
+        tweaks:      tab.cellTweaks,
       },
       globalBackground:      tab.globalBackground,
       globalBackgroundColor: tab.globalBackgroundColor,
+      tweakScope:      tab.tweakScope      ?? 'all',
+      tweakActiveCell: tab.tweakActiveCell ?? 0,
     })),
     activeTabIndex: state.activeTabIndex,
   };
@@ -2184,6 +2324,9 @@ async function restoreSession(sessionData) {
   state.layout.globalBackground      = L.globalBackground      ?? true;
   state.layout.globalBackgroundColor = L.globalBackgroundColor ?? '#000000';
   state.layout.cellBackgrounds       = L.cellBackgrounds       ?? [];
+  state.layout.tweakScope            = L.tweakScope            ?? 'all';
+  state.layout.tweakActiveCell       = L.tweakActiveCell       ?? 0;
+  state.layout.cellTweaks            = (L.cellTweaks ?? []).map(t => ({ ...t }));
 
   // 2. Restore watermark from library
   if (L.watermarkFilename) {
@@ -2384,6 +2527,8 @@ async function restoreSession(sessionData) {
         watermarkOpacity:      tabData.watermarkOpacity      ?? 1.0,
         globalBackground:      tabData.globalBackground      ?? true,
         globalBackgroundColor: tabData.globalBackgroundColor ?? '#000000',
+        tweakScope:      tabData.tweakScope      ?? 'all',
+        tweakActiveCell: tabData.tweakActiveCell ?? 0,
       });
       if (tab.watermarkFilename) {
         const libItem = watermarkLibrary.find(w => w.filename === tab.watermarkFilename);
@@ -2397,6 +2542,7 @@ async function restoreSession(sessionData) {
       tab.cellScales      = pad(tabData.cells?.scales,      tabCells, () => 1.0);
       tab.cellLocked      = pad(tabData.cells?.locked,      tabCells, () => false);
       tab.cellBackgrounds = pad(tabData.cells?.backgrounds, tabCells, () => restoreBg);
+      tab.cellTweaks      = pad(tabData.cells?.tweaks,      tabCells, () => ({ contrast: 0, lift: 0, saturation: 0 }));
       return tab;
     });
     state.activeTabIndex = Math.min(
@@ -2461,6 +2607,9 @@ function syncRestoredControls(L) {
     : (L.cellBackgrounds?.[0] ?? '#000000');
   if (cellBgSwatch) cellBgSwatch.style.backgroundColor = bgColor;
   if (cellBgInput)  cellBgInput.value = bgColor;
+
+  // Tweaks
+  syncTweakSliders();
 
   renderWatermarkLibrary();
 }

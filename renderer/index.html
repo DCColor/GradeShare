@@ -237,6 +237,46 @@
                 <div id="grid-picker" class="picker-row"></div>
               </div>
 
+              <div class="tweaks-section-divider"></div>
+
+              <div class="controls-section" id="section-tweaks">
+                <div class="tweaks-header">
+                  <span class="tweaks-title">TWEAKS</span>
+                  <span class="tweaks-subtitle">Display adjustments · export only</span>
+                </div>
+
+                <div class="tweaks-scope-row">
+                  <button id="tweak-scope-all" class="picker-btn active" data-scope="all">All cells</button>
+                  <button id="tweak-scope-cell" class="picker-btn" data-scope="cell">This cell</button>
+                </div>
+
+                <div class="tweak-slider-row">
+                  <div class="tweak-label-row">
+                    <span id="tweak-contrast-label" class="tweak-label">Contrast</span>
+                    <span id="tweak-contrast-value" class="tweak-value">0</span>
+                  </div>
+                  <input id="tweak-contrast-slider" type="range" min="-100" max="100" step="1" value="0" class="tweak-slider">
+                </div>
+
+                <div class="tweak-slider-row">
+                  <div class="tweak-label-row">
+                    <span id="tweak-lift-label" class="tweak-label">Lift</span>
+                    <span id="tweak-lift-value" class="tweak-value">0</span>
+                  </div>
+                  <input id="tweak-lift-slider" type="range" min="-100" max="100" step="1" value="0" class="tweak-slider">
+                </div>
+
+                <div class="tweak-slider-row">
+                  <div class="tweak-label-row">
+                    <span id="tweak-saturation-label" class="tweak-label">Saturation</span>
+                    <span id="tweak-saturation-value" class="tweak-value">0</span>
+                  </div>
+                  <input id="tweak-saturation-slider" type="range" min="-100" max="100" step="1" value="0" class="tweak-slider">
+                </div>
+
+                <button id="btn-tweak-reset" class="btn-subtle btn-tweak-reset">Reset</button>
+              </div>
+
               <div class="controls-section" id="section-cell-background">
                 <span class="control-label">Cell background</span>
                 <div class="cell-bg-row">
