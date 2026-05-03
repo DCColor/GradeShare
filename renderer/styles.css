@@ -1505,25 +1505,33 @@ input {
 
 .layout-cell-lock {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  font-size: 11px;
-  line-height: 1;
-  background: none;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
   border: none;
+  border-radius: 4px;
   cursor: pointer;
+  padding: 3px;
+  color: rgba(255, 255, 255, 0.4);
   opacity: 0;
-  transition: opacity 0.12s;
-  padding: 1px 2px;
-  border-radius: 3px;
-  z-index: 10;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+  z-index: 20;
+  -webkit-app-region: no-drag;
+  pointer-events: all;
 }
 
 .layout-cell:hover .layout-cell-lock {
-  opacity: 0.6;
+  opacity: 1;
 }
 
 .layout-cell-lock.locked {
+  background: rgb(230, 5, 1);
+  color: rgba(255, 255, 255, 1);
   opacity: 1 !important;
 }
 
